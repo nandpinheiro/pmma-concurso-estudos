@@ -12,7 +12,7 @@ import type {
   ViewKey,
 } from '../types';
 
-const STORAGE_KEY = 'pmma-study-state-v1';
+const STORAGE_KEY = 'pmma-study-state-v2';
 
 const defaultSettings: UserSettings = {
   theme: 'light',
@@ -42,6 +42,7 @@ export function useStudyApp() {
   const [trainingIndex, setTrainingIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<'CERTO' | 'ERRADO' | null>(null);
   const [answerConfirmed, setAnswerConfirmed] = useState(false);
+  const [startTime, setStartTime] = useState<number>(0);
   const [simuladoSession, setSimuladoSession] = useState<{ questions: Question[]; index: number; startedAt: number } | null>(null);
 
   useEffect(() => {
@@ -113,13 +114,15 @@ export function useStudyApp() {
 
     const avgTime = total > 0 ? Math.round(attempts.reduce((sum, item) => sum + item.tempoGasto, 0) / total / 1000) : 0;
 
+    const paraRevisao = attempts.filter((item) => !item.acertou).length;
+
     return {
       respondidas: total,
       acertos,
       erros,
       percentual,
       naoRespondidas,
-      paraRevisao: state.attempts.filter((item) => !item.acertou && item.revisada).length,
+      paraRevisao,
       errosRecentes: recentErrors,
       melhorDisciplina: bestDiscipline,
       piorDisciplina: piorDisciplina,
@@ -157,7 +160,7 @@ export function useStudyApp() {
       totalAnswered: summary.acertos + summary.erros,
       acertos: summary.acertos,
       erros: summary.erros,
-      percentual: summary.total > 0 ? Math.round((summary.acertos / Math.max(1, summary.total)) * 100) : 0,
+      percentual: summary.total > 0 ? Math.round((summary.acertos / Math.max(1, summary.acertos + summary.erros)) * 100) : 0,
     }));
   }, [state.attempts, state.questions]);
 
@@ -184,7 +187,7 @@ export function useStudyApp() {
         questionId,
         disciplina: item.disciplina,
         assunto: item.assunto,
-        data: item.data,
+        data: new Date(item.data).toLocaleDateString('pt-BR'),
         erros: item.erros,
         ultimaResposta: item.ultimaResposta,
         proximaRevisao: new Date(Date.now() + (item.erros + 1) * 86400000).toLocaleDateString('pt-BR'),
@@ -192,10 +195,13 @@ export function useStudyApp() {
       });
     }
 
-    return items.filter((item) => item.erros > 0 || state.marks[item.questionId]?.revisar).slice(0, 10);
+    return items.filter((item) => item.erros > 0 || state.marks[item.questionId]?.revisar).sort((a, b) => {
+      const priorityOrder = { alta: 0, média: 1, baixa: 2 };
+      return priorityOrder[a.prioridade] - priorityOrder[b.prioridade];
+    }).slice(0, 10);
   }, [state.attempts, state.marks, state.questions]);
 
-  const history = useMemo(() => [...state.attempts].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()), [state.attempts]);
+  const history = useMemo(() => [...state.attempts].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()).slice(0, 50), [state.attempts]);
 
   const startTraining = useCallback((filters?: { disciplina?: string; assunto?: string; quantidade?: number }) => {
     let source = state.questions;
@@ -220,13 +226,15 @@ export function useStudyApp() {
     setTrainingIndex(0);
     setSelectedAnswer(null);
     setAnswerConfirmed(false);
+    setStartTime(Date.now());
     setView('train');
   }, [state.attempts, state.questions]);
 
   const currentTrainingQuestion = trainingQueue[trainingIndex] ?? null;
 
-  const recordAnswer = useCallback((question: Question, answer: 'CERTO' | 'ERRADO', timeSpentMs: number) => {
+  const recordAnswer = useCallback((question: Question, answer: 'CERTO' | 'ERRADO') => {
     const acertou = answer === question.respostaCorreta;
+    const timeSpentMs = Math.max(1000, Date.now() - startTime);
     const record: AnswerRecord = {
       id: `${question.id}-${Date.now()}`,
       questionId: question.id,
@@ -248,13 +256,14 @@ export function useStudyApp() {
 
     setSelectedAnswer(answer);
     setAnswerConfirmed(true);
-  }, [state.attempts, updateState]);
+  }, [startTime, state.attempts, updateState]);
 
   const nextTrainingQuestion = useCallback(() => {
     if (trainingIndex < trainingQueue.length - 1) {
       setTrainingIndex((index) => index + 1);
       setSelectedAnswer(null);
       setAnswerConfirmed(false);
+      setStartTime(Date.now());
       return;
     }
 
@@ -262,22 +271,26 @@ export function useStudyApp() {
     setTrainingIndex(0);
     setSelectedAnswer(null);
     setAnswerConfirmed(false);
+    setStartTime(0);
     setView('dashboard');
   }, [trainingIndex, trainingQueue.length]);
 
   const toggleMark = useCallback((questionId: string, mark: 'favorita' | 'revisar' | 'pegadinha' | 'dificil') => {
-    updateState((current) => ({
-      ...current,
-      marks: {
-        ...current.marks,
-        [questionId]: {
-          favorita: mark === 'favorita' ? !current.marks[questionId]?.favorita : !!current.marks[questionId]?.favorita,
-          revisar: mark === 'revisar' ? !current.marks[questionId]?.revisar : !!current.marks[questionId]?.revisar,
-          pegadinha: mark === 'pegadinha' ? !current.marks[questionId]?.pegadinha : !!current.marks[questionId]?.pegadinha,
-          dificil: mark === 'dificil' ? !current.marks[questionId]?.dificil : !!current.marks[questionId]?.dificil,
+    updateState((current) => {
+      const existing = current.marks[questionId] ?? { favorita: false, revisar: false, pegadinha: false, dificil: false };
+      return {
+        ...current,
+        marks: {
+          ...current.marks,
+          [questionId]: {
+            favorita: mark === 'favorita' ? !existing.favorita : existing.favorita,
+            revisar: mark === 'revisar' ? !existing.revisar : existing.revisar,
+            pegadinha: mark === 'pegadinha' ? !existing.pegadinha : existing.pegadinha,
+            dificil: mark === 'dificil' ? !existing.dificil : existing.dificil,
+          },
         },
-      },
-    }));
+      };
+    });
   }, [updateState]);
 
   const updateSettings = useCallback((next: Partial<UserSettings>) => {
@@ -295,24 +308,29 @@ export function useStudyApp() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'pmma-backup.json';
+    a.download = `pmma-backup-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [state]);
 
   const importJson = useCallback((file: File) => {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = (event) => {
       try {
-        const parsed = JSON.parse(String(reader.result));
+        const result = event.target?.result;
+        if (typeof result !== 'string') throw new Error('Invalid file');
+        const parsed = JSON.parse(result);
         setState({
           questions: parsed.questions ?? sampleQuestions,
           attempts: parsed.attempts ?? [],
           marks: parsed.marks ?? {},
           settings: { ...defaultSettings, ...(parsed.settings ?? {}) },
         });
-      } catch {
-        window.alert('Arquivo inválido. Verifique o backup exportado no formato JSON.');
+        alert('Dados importados com sucesso!');
+      } catch (error) {
+        alert(`Erro ao importar: ${error instanceof Error ? error.message : 'arquivo inválido'}`);
       }
     };
     reader.readAsText(file);
@@ -321,7 +339,7 @@ export function useStudyApp() {
   const startSimulado = useCallback((disciplinas: string[], quantity: number) => {
     const filtered = state.questions.filter((question) => disciplinas.includes(question.disciplina));
     const pool = filtered.length > 0 ? filtered : state.questions;
-    const chosen = [...pool].sort(() => Math.random() - 0.5).slice(0, quantity);
+    const chosen = [...pool].sort(() => Math.random() - 0.5).slice(0, Math.min(quantity, pool.length));
     setSimuladoSession({
       questions: chosen,
       index: 0,
@@ -329,18 +347,22 @@ export function useStudyApp() {
     });
     setSelectedAnswer(null);
     setAnswerConfirmed(false);
+    setStartTime(Date.now());
     setView('simulado');
   }, [state.questions]);
 
   const simuladoCurrent = simuladoSession?.questions[simuladoSession.index] ?? null;
 
-  const answerSimuladoQuestion = useCallback((question: Question, answer: 'CERTO' | 'ERRADO', timeSpentMs: number) => {
-    recordAnswer(question, answer, timeSpentMs);
+  const answerSimuladoQuestion = useCallback((question: Question, answer: 'CERTO' | 'ERRADO') => {
+    recordAnswer(question, answer);
 
     if (simuladoSession && simuladoSession.index < simuladoSession.questions.length - 1) {
-      setSimuladoSession((current) => current ? { ...current, index: current.index + 1 } : current);
-      setSelectedAnswer(null);
-      setAnswerConfirmed(false);
+      setTimeout(() => {
+        setSimuladoSession((current) => (current ? { ...current, index: current.index + 1 } : current));
+        setSelectedAnswer(null);
+        setAnswerConfirmed(false);
+        setStartTime(Date.now());
+      }, 500);
     }
   }, [recordAnswer, simuladoSession]);
 
@@ -348,6 +370,7 @@ export function useStudyApp() {
     setSimuladoSession(null);
     setSelectedAnswer(null);
     setAnswerConfirmed(false);
+    setStartTime(0);
     setView('dashboard');
   }, []);
 
