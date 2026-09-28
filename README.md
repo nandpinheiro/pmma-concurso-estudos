@@ -11,9 +11,11 @@ Aplicativo responsivo de estudos para preparação do concurso PMMA/CEBRASPE com
 - ✅ **Revisão espaçada** com algoritmo de recomendação
 - ✅ **Desempenho detalhado** por disciplina e período
 - ✅ **Histórico completo** de respostas com análise temporal
-- ✅ **Modo simulado** com cronômetro e distribuição de questões
-- ✅ **Persistência local** com IndexedDB/localStorage
-- ✅ **Import/export** de dados em JSON
+- ✅ **Modo simulado** com cronômetro, navegação, respostas em branco e pontuação líquida CEBRASPE
+- ✅ **Persistência local** em IndexedDB, com migração do estado legado
+- ✅ **Importação validada** e exportação versionada de backup, questões, histórico e progresso
+- ✅ **PWA** com manifesto e cache offline dos recursos já carregados
+- ✅ **Testes unitários** para revisão, prioridade, recomendação, seleção, desempenho, CEBRASPE e armazenamento
 - ✅ **Dark mode** com preferência salva
 - ✅ **Responsivo** para computador, tablet e celular
 - ✅ **Sem login** - funciona 100% local
@@ -56,7 +58,15 @@ src/
 ├── storage/         # Serviço de persistência
 │   └── storageService.ts
 ├── algorithms/      # Lógica de negócios
-│   └── recommendation.ts
+│   ├── reviewAlgorithm.ts
+│   ├── priorityAlgorithm.ts
+│   ├── recommendation.ts
+│   ├── questionSelectionAlgorithm.ts
+│   ├── performanceAlgorithm.ts
+│   ├── cebraspeAlgorithm.ts
+│   └── notebookAlgorithm.ts
+├── services/        # Importação, exportação e validação
+│   └── importExportService.ts
 ├── data/            # Dados e questões de exemplo
 │   ├── sampleQuestions.ts
 │   └── disciplines.ts
@@ -64,6 +74,11 @@ src/
 ├── index.css        # Estilos globais com Tailwind
 ├── main.tsx         # Ponto de entrada
 └── App.tsx          # Componente raiz
+
+public/
+├── manifest.webmanifest
+├── sw.js
+└── icon.svg
 ```
 
 ## 📚 Banco de Questões
@@ -84,15 +99,20 @@ interface Question {
   dificuldade: 'fácil' | 'média' | 'difícil';
   fonte: string;                 // Origem da questão
   tags: string[];                // Palavras-chave
+  active?: boolean;              // false desativa a questão
+  pegadinha?: string;            // Observação opcional
+  year?: number;
+  organization?: string;
   isDemo?: boolean;              // Marca questões de exemplo
 }
 ```
 
 ### Importar Questões
 
-1. Vá para **Configurações** → **Importar dados**
-2. Selecione um arquivo JSON com suas questões
-3. Os dados serão mesclados com o banco local
+1. Vá para **Configurações** → **Importar**
+2. Selecione um JSON com uma lista de questões ou um objeto com `questions`
+3. Questões são validadas e mescladas por ID; duplicatas e inválidas aparecem no relatório
+4. Um backup completo restaura questões, tentativas, marcas e configurações
 
 **Exemplo de arquivo JSON:**
 
@@ -120,27 +140,32 @@ interface Question {
 }
 ```
 
-## 🔄 Sistema de Revisão
+## Revisão Adaptativa
 
-O app usa um algoritmo simples de revisão espaçada:
+O agendamento deriva os níveis do histórico de tentativas:
 
 - **Nível 0**: Não vista
-- **Nível 1**: Errou (revisar em 1 dia)
-- **Nível 2**: Acertou após erro (revisar em 3 dias)
-- **Nível 3**: Acertou novamente (revisar em 7 dias)
-- **Nível 4**: Domínio (revisar em 15 dias)
+- **Nível 1**: Erro (revisar em 1 dia)
+- **Nível 2**: Acerto após erro (3 dias)
+- **Nível 3**: Primeiro domínio (7 dias)
+- **Nível 4**: Domínio consolidado (15 dias)
+- **Nível 5**: Domínio forte (30 dias)
 
-O sistema sugere automaticamente o próximo treino baseado no histórico.
+O nível e a próxima revisão são derivados do histórico. A prioridade por assunto combina desempenho, erros recentes e recorrentes, revisões vencidas, tendência, dificuldade e questões não vistas. A confiança cresce com o tamanho da amostra; uma resposta isolada não basta para indicar domínio.
+
+Treinos excluem questões respondidas nas últimas 24 horas e informam quando não há conteúdo suficiente para completar a quantidade pedida. O modo de revisão seleciona apenas itens vencidos.
 
 ## 📊 Algoritmo de Prioridade
 
-As disciplinas são priorizadas considerando:
+Pontuação de 0 a 100, com pesos declarados em `priorityAlgorithm.ts`:
 
-- Percentual de acertos
-- Quantidade de erros recentes
-- Quantidade total de questões respondidas
-- Tempo desde última revisão
-- Dificuldade das questões
+- 25%: fraqueza de desempenho
+- 20%: erros recentes
+- 20%: erros recorrentes
+- 15%: revisões vencidas
+- 10%: tendência recente
+- 5%: dificuldade
+- 5%: questões não vistas
 
 ## 🛠️ Desenvolvimento
 
@@ -162,16 +187,33 @@ npm run build
 
 # Preview do build
 npm run preview
+
+# Testes unitários
+npm test
 ```
 
-## 💾 Persistência de Dados
+## Armazenamento e Backup
 
-Todos os dados são salvos automaticamente no navegador:
+O app salva localmente no navegador, sem enviar dados para servidores:
 
-- **localStorage**: Pequenas estruturas de dados
-- **IndexedDB**: Volumes maiores (questões, histórico)
+- **IndexedDB**: questões, tentativas, marcas e configurações em object stores separados
+- O estado existente no `localStorage` é migrado na primeira abertura; em navegadores sem IndexedDB, há fallback local
 
-Os dados **não são enviados para nenhum servidor**. Tudo funciona offline.
+Em **Configurações**, é possível exportar questões, histórico, progresso derivado ou backup completo. Para transferir o estado para outro computador, use **Backup completo** e importe o JSON no outro navegador.
+
+O service worker é registrado em builds de produção. A disponibilidade offline depende de abrir o app online ao menos uma vez e de o navegador manter o cache; o modo de desenvolvimento não registra o service worker.
+
+## Testes
+
+Execute `npm test`. Os testes cobrem os intervalos de revisão, amostra pequena, erro recorrente, prioridade que muda com novas respostas, seleção sem repetição, janelas de desempenho, cálculo CEBRASPE, validação de importação e persistência IndexedDB em memória.
+
+## Limitações atuais
+
+- A hidratação ainda carrega questões e tentativas no estado React; IndexedDB tem índices, mas não há paginação/consultas por demanda para bancos de 10 mil ou mais itens.
+- O modo simulado não tem distribuição por assunto/dificuldade, pausa ou resumo por assunto; a penalidade é configurável e o relatório apresenta desempenho por disciplina.
+- O desempenho recente cobre as janelas de 10, 20, 30, 50, 100 e histórico; gráficos temporais de 7/30/90 dias não foram implementados.
+- Preferência de tema oferece claro/escuro, sem opção “sistema”.
+- Os dados de exemplo são demonstrativos e marcados como fictícios; não incluem questões oficiais.
 
 ## 📱 Responsividade
 

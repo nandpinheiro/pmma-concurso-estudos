@@ -1,12 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { PriorityBadge, QuestionCard, SectionHeader, StatCard } from './StatCard';
-import type { Question, ViewKey, AnswerRecord } from '../types';
+import { Layout } from './components/Layout';
+import { PriorityBadge, QuestionCard, SectionHeader, StatCard } from './components/StatCard';
+import { calculatePerformance } from './algorithms/performanceAlgorithm';
+import { calculateCebraspeScore } from './algorithms/cebraspeAlgorithm';
+import type { ExportKind } from './services/importExportService';
+import { useStudyApp } from './hooks/useStudyApp';
+import type { AnswerValue, Question, ViewKey, AnswerRecord, Recommendation, UserSettings, NotebookCategory, NotebookItem } from './types';
 
 interface DashboardPageProps {
   stats: {
     respondidas: number;
     acertos: number;
     erros: number;
+    emBranco: number;
     percentual: number;
     naoRespondidas: number;
     paraRevisao: number;
@@ -17,10 +23,10 @@ interface DashboardPageProps {
     respondidasHoje: number;
     tempoMedio: number;
   };
-  recommendation: { disciplina: string; assunto: string; quantidade: number; prioridade: 'alta' | 'média' | 'baixa'; motivo: string };
+  recommendation: Recommendation;
   reviewItems: Array<{ disciplina: string; assunto: string; data: string; erros: number; ultimaResposta: 'CERTO' | 'ERRADO' | null; prioridade: 'alta' | 'média' | 'baixa'; questionId: string }>
   setView: (view: ViewKey) => void;
-  startTraining: (filters?: { disciplina?: string; assunto?: string; quantidade?: number }) => void;
+  startTraining: (filters?: { disciplina?: string; assunto?: string; quantidade?: number; mode?: Recommendation['mode'] }) => void;
 }
 
 export function DashboardPage({ stats, recommendation, reviewItems, setView, startTraining }: DashboardPageProps) {
@@ -28,11 +34,12 @@ export function DashboardPage({ stats, recommendation, reviewItems, setView, sta
 
   return (
     <div className="space-y-6 pb-28">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <StatCard label="Questões respondidas" value={stats.respondidas} tone="primary" helper="total de registros" />
         <StatCard label="Acertos" value={stats.acertos} tone="success" helper="respostas corretas" />
         <StatCard label="Erros" value={stats.erros} tone="danger" helper="respostas erradas" />
-        <StatCard label="Aproveitamento" value={`${stats.percentual}%`} tone="warning" helper="média geral" />
+        <StatCard label="Em branco" value={stats.emBranco} tone="warning" helper="itens sem resposta" />
+        <StatCard label="Aproveitamento" value={`${stats.percentual}%`} tone="warning" helper={stats.respondidas < 5 ? `${stats.acertos}/${stats.respondidas} respostas; amostra pequena` : `${stats.acertos}/${stats.respondidas} respostas`} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
@@ -47,7 +54,8 @@ export function DashboardPage({ stats, recommendation, reviewItems, setView, sta
             </div>
             <button
               type="button"
-              onClick={() => startTraining({ disciplina: recommendation.disciplina, quantidade: recommendation.quantidade })}
+              onClick={() => startTraining({ disciplina: recommendation.disciplina || undefined, assunto: recommendation.assunto === 'Questões não vistas' ? undefined : recommendation.assunto, quantidade: recommendation.quantidade, mode: recommendation.mode })}
+              disabled={!recommendation.quantidade}
               className="mt-3 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
             >
               Começar treino
@@ -123,6 +131,7 @@ interface TrainPageProps {
   marks: Record<string, { favorita?: boolean; revisar?: boolean; pegadinha?: boolean; dificil?: boolean }>;
   nextQuestion: () => void;
   disciplines: string[];
+  trainingNotice: string;
 }
 
 export function TrainPage({
@@ -138,15 +147,36 @@ export function TrainPage({
   marks,
   nextQuestion,
   disciplines,
+  trainingNotice,
 }: TrainPageProps) {
   const [disciplina, setDisciplina] = useState('');
   const [quantidade, setQuantidade] = useState(10);
+
+  useEffect(() => {
+    if (!currentQuestion) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.ctrlKey || event.metaKey || event.altKey || target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName ?? '')) return;
+
+      const key = event.key.toLowerCase();
+      if (!answerConfirmed && key === 'c') onAnswer('CERTO');
+      else if (!answerConfirmed && key === 'e') onAnswer('ERRADO');
+      else if (answerConfirmed && (key === 'n' || key === 'enter')) nextQuestion();
+      else if (key === 'r') onToggleMark('revisar');
+      else return;
+      event.preventDefault();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [answerConfirmed, currentQuestion, nextQuestion, onAnswer, onToggleMark]);
 
   if (!currentQuestion) {
     return (
       <div className="space-y-6 pb-28">
         <div className="card space-y-4">
           <SectionHeader title="Seleção de treino" />
+          {trainingNotice && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">{trainingNotice}</p>}
           <div className="grid gap-4 md:grid-cols-3">
             <label className="space-y-2 text-sm text-slate-700 dark:text-slate-200">
               <span>Disciplina</span>
@@ -190,12 +220,14 @@ export function TrainPage({
 
   return (
     <div className="space-y-6 pb-28">
+      {trainingNotice && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">{trainingNotice}</p>}
       <QuestionCard
         question={currentQuestion}
         index={index + 1}
         total={total}
         selectedAnswer={selectedAnswer}
         answerConfirmed={answerConfirmed}
+        disabled={answerConfirmed}
         onAnswer={onAnswer}
         onToggleMark={onToggleMark}
         currentMark={marks[currentQuestion.id]}
@@ -217,17 +249,58 @@ export function TrainPage({
 }
 
 interface CadernoPageProps {
-  items: Array<{ disciplina: string; assunto: string; data: string; erros: number; ultimaResposta: 'CERTO' | 'ERRADO' | null; proximaRevisao: string; prioridade: 'alta' | 'média' | 'baixa'; questionId: string }>
+  items: NotebookItem[];
+  onReviewNow: () => void;
+  defaultCategory: NotebookCategory;
 }
 
-export function CadernoPage({ items }: CadernoPageProps) {
+const notebookCategoryLabels: Record<NotebookCategory, string> = {
+  ERROS_RECENTES: 'Erros recentes',
+  ERROS_RECORRENTES: 'Erros recorrentes',
+  REVISOES_VENCIDAS: 'Revisões vencidas',
+  QUESTOES_DIFICEIS: 'Questões difíceis',
+  FAVORITAS: 'Favoritas',
+  PEGADINHAS: 'Pegadinhas',
+  NAO_VISTAS: 'Não vistas',
+};
+
+export function CadernoPage({ items, onReviewNow, defaultCategory }: CadernoPageProps) {
+  const [category, setCategory] = useState<NotebookCategory | 'TODAS'>(defaultCategory);
+  const [visibleCount, setVisibleCount] = useState(40);
+  const filteredItems = items.filter((item) => category === 'TODAS' || item.categorias.includes(category));
+  const overdueCount = items.filter((item) => item.vencida).length;
+
+  useEffect(() => {
+    setCategory(defaultCategory);
+    setVisibleCount(40);
+  }, [defaultCategory]);
+
+  const changeCategory = (nextCategory: NotebookCategory | 'TODAS') => {
+    setCategory(nextCategory);
+    setVisibleCount(40);
+  };
+
   return (
     <div className="space-y-5 pb-28">
       <div className="card">
         <SectionHeader title="Caderno Inteligente" />
+        {overdueCount > 0 && (
+          <button type="button" onClick={onReviewNow} className="mb-4 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700">
+            Revisar agora ({overdueCount})
+          </button>
+        )}
+        <label className="mb-4 block max-w-md space-y-2 text-sm text-slate-700 dark:text-slate-200">
+          <span>Categoria</span>
+          <select value={category} onChange={(event) => changeCategory(event.target.value as NotebookCategory | 'TODAS')} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+            <option value="TODAS">Todas ({items.length})</option>
+            {(Object.entries(notebookCategoryLabels) as Array<[NotebookCategory, string]>).map(([key, label]) => (
+              <option key={key} value={key}>{label} ({items.filter((item) => item.categorias.includes(key)).length})</option>
+            ))}
+          </select>
+        </label>
         <div className="space-y-3">
-          {items.length ? (
-            items.map((item) => (
+          {filteredItems.length ? (
+            filteredItems.slice(0, visibleCount).map((item) => (
               <div key={item.questionId} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex-1 min-w-0">
@@ -236,16 +309,21 @@ export function CadernoPage({ items }: CadernoPageProps) {
                   </div>
                   <PriorityBadge priority={item.prioridade} />
                 </div>
+                <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">{item.enunciado}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {item.categorias.map((itemCategory) => <span key={itemCategory} className="pill bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">{notebookCategoryLabels[itemCategory]}</span>)}
+                </div>
                 <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-3">
                   <span>Erros: {item.erros}</span>
                   <span>Data: {item.data}</span>
-                  <span>Próxima: {item.proximaRevisao}</span>
+                  <span>{item.vencida ? 'Vencida' : 'Próxima'}: {item.proximaRevisao}</span>
                 </div>
               </div>
             ))
           ) : (
-            <p className="text-sm text-slate-500 dark:text-slate-400">Nenhuma questão em análise.</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Nenhuma questão nesta categoria.</p>
           )}
+          {filteredItems.length > visibleCount && <button type="button" onClick={() => setVisibleCount((count) => count + 40)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium dark:border-slate-700">Carregar mais ({filteredItems.length - visibleCount})</button>}
         </div>
       </div>
     </div>
@@ -257,32 +335,18 @@ interface PerformancePageProps {
 }
 
 export function PerformancePage({ attempts }: PerformancePageProps) {
-  const countByDiscipline = new Map<string, number>();
-  const acertos = new Map<string, number>();
-
-  for (const attempt of attempts) {
-    countByDiscipline.set(attempt.disciplina, (countByDiscipline.get(attempt.disciplina) ?? 0) + 1);
-    if (attempt.acertou) {
-      acertos.set(attempt.disciplina, (acertos.get(attempt.disciplina) ?? 0) + 1);
-    }
-  }
-
-  const data = [...countByDiscipline.entries()].map(([discipline, total]) => ({
-    discipline,
-    total,
-    percent: Math.round(((acertos.get(discipline) ?? 0) / Math.max(1, total)) * 100),
-  })).sort((a, b) => b.total - a.total);
-
-  const overallPercent = attempts.length > 0 ? Math.round((attempts.filter((a) => a.acertou).length / attempts.length) * 100) : 0;
+  const performance = calculatePerformance(attempts);
+  const overallPercent = performance.windows.all.accuracy === null ? null : Math.round(performance.windows.all.accuracy * 100);
 
   return (
     <div className="space-y-6 pb-28">
       <div className="card">
         <SectionHeader title="Desempenho" />
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard label="Total" value={attempts.length} tone="primary" />
           <StatCard label="Acertos" value={attempts.filter((item) => item.acertou).length} tone="success" />
-          <StatCard label="Erros" value={attempts.filter((item) => !item.acertou).length} tone="danger" />
+          <StatCard label="Erros" value={attempts.filter((item) => item.acertou === false).length} tone="danger" />
+          <StatCard label="Em branco" value={attempts.filter((item) => item.acertou === null).length} tone="warning" />
         </div>
       </div>
 
@@ -293,23 +357,39 @@ export function PerformancePage({ attempts }: PerformancePageProps) {
             <div className="flex h-4 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
               <div className="h-full bg-brand-500 transition-all" style={{ width: `${overallPercent}%` }} />
             </div>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{overallPercent}% de aproveitamento</p>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{overallPercent === null ? 'Sem respostas avaliadas' : `${overallPercent}% de aproveitamento`}</p>
           </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <SectionHeader title="Desempenho recente" right={<span className="text-sm text-slate-500 dark:text-slate-400">Tendência: {performance.recentTrend === 'down' ? 'queda' : performance.recentTrend === 'up' ? 'alta' : performance.recentTrend === 'stable' ? 'estável' : 'amostra insuficiente'}</span>} />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          {(['10', '20', '30', '50', '100', 'all'] as const).map((windowKey) => {
+            const metric = performance.windows[windowKey];
+            const label = windowKey === 'all' ? 'Histórico' : `Últimas ${windowKey}`;
+            const percentage = metric.accuracy === null ? '—' : `${Math.round(metric.accuracy * 100)}%`;
+            const evaluated = metric.correct + metric.wrong;
+            const helper = metric.accuracy === null
+              ? `${metric.attempts} tentativas; sem respostas avaliadas`
+              : `${metric.correct}/${evaluated} avaliadas${evaluated < 5 ? '; amostra pequena' : ''}`;
+            return <StatCard key={windowKey} label={label} value={percentage} helper={helper} />;
+          })}
         </div>
       </div>
 
       <div className="card">
         <SectionHeader title="Desempenho por disciplina" />
         <div className="space-y-3">
-          {data.length ? (
-            data.map((item) => (
+          {performance.byDiscipline.length ? (
+            performance.byDiscipline.map((item) => (
               <div key={item.discipline}>
                 <div className="mb-1 flex items-center justify-between text-sm text-slate-600 dark:text-slate-300">
                   <span className="truncate">{item.discipline}</span>
-                  <span className="ml-2 shrink-0 font-semibold">{item.percent}%</span>
+                  <span className="ml-2 shrink-0 font-semibold">{item.accuracy === null ? '—' : `${Math.round(item.accuracy * 100)}%`} · {item.attempts} questões</span>
                 </div>
                 <div className="h-3 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                  <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${item.percent}%` }} />
+                  <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${item.accuracy === null ? 0 : item.accuracy * 100}%` }} />
                 </div>
               </div>
             ))
@@ -322,10 +402,107 @@ export function PerformancePage({ attempts }: PerformancePageProps) {
   );
 }
 
+interface HistoryPageProps {
+  attempts: AnswerRecord[];
+  questions: Question[];
+  disciplines: string[];
+}
+
+export function HistoryPage({ attempts, questions, disciplines }: HistoryPageProps) {
+  const [outcome, setOutcome] = useState<'all' | 'correct' | 'wrong' | 'blank'>('all');
+  const [discipline, setDiscipline] = useState('');
+  const [mode, setMode] = useState('all');
+  const [search, setSearch] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
+  const questionById = new Map(questions.map((question) => [question.id, question]));
+  const filtered = attempts.filter((attempt) => {
+    const question = questionById.get(attempt.questionId);
+    const matchesOutcome = outcome === 'all' ||
+      (outcome === 'correct' && attempt.acertou === true) ||
+      (outcome === 'wrong' && attempt.acertou === false) ||
+      (outcome === 'blank' && attempt.acertou === null);
+    const attemptDate = new Date(attempt.data);
+    const from = fromDate ? new Date(`${fromDate}T00:00:00`) : null;
+    const to = toDate ? new Date(`${toDate}T23:59:59.999`) : null;
+    const query = search.trim().toLocaleLowerCase('pt-BR');
+    const matchesSearch = !query || `${attempt.disciplina} ${attempt.assunto} ${question?.enunciado ?? ''}`.toLocaleLowerCase('pt-BR').includes(query);
+    return matchesOutcome && (!discipline || attempt.disciplina === discipline) &&
+      (mode === 'all' || attempt.mode === mode) &&
+      (!from || attemptDate >= from) && (!to || attemptDate <= to) && matchesSearch;
+  });
+  const pageCount = Math.ceil(filtered.length / pageSize);
+  const visibleAttempts = filtered.slice(page * pageSize, (page + 1) * pageSize);
+
+  useEffect(() => setPage(0), [outcome, discipline, mode, search, fromDate, toDate]);
+
+  return (
+    <div className="space-y-5 pb-28">
+      <div className="card space-y-4">
+        <SectionHeader title="Histórico de tentativas" right={<span className="text-sm text-slate-500 dark:text-slate-400">{filtered.length} registros</span>} />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <label className="space-y-1 text-sm text-slate-700 dark:text-slate-200">Resultado
+            <select value={outcome} onChange={(event) => setOutcome(event.target.value as typeof outcome)} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <option value="all">Todos</option><option value="correct">Acertos</option><option value="wrong">Erros</option><option value="blank">Em branco</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-sm text-slate-700 dark:text-slate-200">Disciplina
+            <select value={discipline} onChange={(event) => setDiscipline(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <option value="">Todas</option>{disciplines.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm text-slate-700 dark:text-slate-200">Modo
+            <select value={mode} onChange={(event) => setMode(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <option value="all">Todos</option><option value="TREINO">Treino</option><option value="REVISAO">Revisão</option><option value="SIMULADO">Simulado</option><option value="ERROS">Erros</option><option value="NAO_VISTAS">Não vistas</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-sm text-slate-700 dark:text-slate-200">De
+            <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900" />
+          </label>
+          <label className="space-y-1 text-sm text-slate-700 dark:text-slate-200">Até
+            <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900" />
+          </label>
+          <label className="space-y-1 text-sm text-slate-700 dark:text-slate-200">Questão ou assunto
+            <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar no histórico" className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900" />
+          </label>
+        </div>
+      </div>
+      <div className="card divide-y divide-slate-200 dark:divide-slate-700">
+        {visibleAttempts.length ? visibleAttempts.map((attempt) => {
+          const question = questionById.get(attempt.questionId);
+          const resultLabel = attempt.acertou === null ? 'Em branco' : attempt.acertou ? 'Acerto' : 'Erro';
+          return (
+            <details key={attempt.id} className="py-4 first:pt-0 last:pb-0">
+              <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-3 text-sm">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold text-slate-800 dark:text-slate-100">{attempt.disciplina} · {attempt.assunto}</span>
+                  <span className="block text-xs text-slate-500 dark:text-slate-400">{new Date(attempt.data).toLocaleString('pt-BR')} · {attempt.tempoGasto ? `${(attempt.tempoGasto / 1000).toFixed(1)}s` : 'tempo indisponível'} · {attempt.mode ?? 'TREINO'}</span>
+                </span>
+                <span className={attempt.acertou === null ? 'font-medium text-slate-500' : attempt.acertou ? 'font-semibold text-emerald-600' : 'font-semibold text-rose-600'}>{resultLabel}</span>
+              </summary>
+              {question && <div className="mt-4"><QuestionCard question={question} selectedAnswer={attempt.resposta === 'CERTO' || attempt.resposta === 'ERRADO' ? attempt.resposta : null} answerConfirmed disabled /></div>}
+              <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Sua resposta: {attempt.resposta ?? 'Em branco'} · Gabarito: {question?.respostaCorreta ?? 'indisponível'}</p>
+            </details>
+          );
+        }) : <p className="py-4 text-sm text-slate-500 dark:text-slate-400">Nenhuma tentativa corresponde aos filtros.</p>}
+        {pageCount > 1 && (
+          <div className="flex items-center justify-between gap-3 pt-4">
+            <button type="button" disabled={page === 0} onClick={() => setPage((current) => current - 1)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-40 dark:border-slate-700">Anterior</button>
+            <span className="text-sm text-slate-500 dark:text-slate-400">Página {page + 1} de {pageCount}</span>
+            <button type="button" disabled={page >= pageCount - 1} onClick={() => setPage((current) => current + 1)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-40 dark:border-slate-700">Próxima</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface SettingsPageProps {
   theme: 'light' | 'dark';
   onThemeToggle: () => void;
-  onExport: () => void;
+  onExport: (kind: ExportKind) => void;
   onImport: (file: File) => void;
   onReset: () => void;
 }
@@ -349,14 +526,17 @@ export function SettingsPage({ theme, onThemeToggle, onExport, onImport, onReset
           </button>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <button
-            type="button"
-            onClick={onExport}
-            className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
-          >
-            Exportar
-          </button>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {([
+            ['backup', 'Backup completo'],
+            ['questions', 'Exportar questões'],
+            ['history', 'Exportar histórico'],
+            ['progress', 'Exportar progresso'],
+          ] as const).map(([kind, label]) => (
+            <button key={kind} type="button" onClick={() => onExport(kind)} className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-700">
+              {label}
+            </button>
+          ))}
           <label className="cursor-pointer rounded-xl border border-slate-200 px-4 py-3 text-center text-sm font-medium dark:border-slate-700 transition hover:bg-slate-50 dark:hover:bg-slate-800">
             Importar
             <input
@@ -388,48 +568,351 @@ interface SimuladoPageProps {
   currentQuestion: Question | null;
   currentIndex: number;
   total: number;
-  onAnswer: (answer: 'CERTO' | 'ERRADO') => void;
+  answer: AnswerValue | null;
+  session: {
+    questions: Question[];
+    answers: Record<string, AnswerValue | null>;
+    startedAt: number;
+    finishedAt?: number;
+    finished: boolean;
+  } | null;
+  disciplines: string[];
+  defaults: UserSettings['simulado'];
+  notice: string;
+  onAnswer: (answer: AnswerValue | null) => void;
+  onMove: (index: number) => void;
+  onStart: (disciplines: string[], quantity: number, minutes: number, penalty: number) => void;
   onFinish: () => void;
 }
 
-export function SimuladoPage({ currentQuestion, currentIndex, total, onAnswer, onFinish }: SimuladoPageProps) {
-  if (!currentQuestion) {
+export function SimuladoPage({
+  currentQuestion,
+  currentIndex,
+  total,
+  answer,
+  session,
+  disciplines,
+  defaults,
+  notice,
+  onAnswer,
+  onMove,
+  onStart,
+  onFinish,
+}: SimuladoPageProps) {
+  const [quantity, setQuantity] = useState(defaults.quantidade);
+  const [minutes, setMinutes] = useState(defaults.tempoMinutos);
+  const [penalty, setPenalty] = useState(defaults.penalidade);
+  const [selectedDisciplines, setSelectedDisciplines] = useState(defaults.disciplinas);
+  const [clockNow, setClockNow] = useState(Date.now());
+
+  useEffect(() => {
+    setQuantity(defaults.quantidade);
+    setMinutes(defaults.tempoMinutos);
+    setPenalty(defaults.penalidade);
+    setSelectedDisciplines(defaults.disciplinas);
+  }, [defaults]);
+
+  useEffect(() => {
+    if (!session || session.finished) return;
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [session]);
+
+  const remainingSeconds = session && !session.finished
+    ? Math.max(0, Math.ceil((session.startedAt + minutes * 60_000 - clockNow) / 1000))
+    : 0;
+
+  useEffect(() => {
+    if (session && !session.finished && remainingSeconds === 0) onFinish();
+  }, [onFinish, remainingSeconds, session]);
+
+  if (session?.finished) {
+    const answers = session.questions.map((question) => ({
+      question,
+      answer: session.answers[question.id] ?? null,
+      correct: session.answers[question.id] === null || session.answers[question.id] === undefined
+        ? null
+        : session.answers[question.id] === question.respostaCorreta,
+    }));
+    const score = calculateCebraspeScore(answers.map((item) => item.correct), penalty);
+    const { correct, wrong, blank, evaluated, netScore } = score;
+    const elapsedMinutes = Math.floor(((session.finishedAt ?? clockNow) - session.startedAt) / 60_000);
+    const byDiscipline = new Map<string, { correct: number; wrong: number; blank: number }>();
+    for (const item of answers) {
+      const summary = byDiscipline.get(item.question.disciplina) ?? { correct: 0, wrong: 0, blank: 0 };
+      if (item.correct === true) summary.correct += 1;
+      else if (item.correct === false) summary.wrong += 1;
+      else summary.blank += 1;
+      byDiscipline.set(item.question.disciplina, summary);
+    }
+
     return (
-      <div className="card pb-28">
-        <SectionHeader title="Modo simulado" />
-        <p className="text-sm text-slate-600 dark:text-slate-300">Nenhuma sessão ativa.</p>
-        <button
-          type="button"
-          onClick={onFinish}
-          className="mt-4 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
-        >
-          Voltar ao dashboard
-        </button>
+      <div className="space-y-5 pb-28">
+        <div className="card space-y-4">
+          <SectionHeader title="Resultado do simulado" />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <StatCard label="Acertos" value={correct} tone="success" />
+            <StatCard label="Erros" value={wrong} tone="danger" />
+            <StatCard label="Em branco" value={blank} tone="warning" />
+            <StatCard label="Aproveitamento" value={score.accuracy === null ? '—' : `${Math.round(score.accuracy * 100)}%`} helper={`${correct}/${evaluated} questões avaliadas`} />
+            <StatCard label="Pontuação líquida" value={netScore.toFixed(1)} helper={`+1 / -${penalty} / 0 · ${elapsedMinutes} min`} />
+          </div>
+          <div className="space-y-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Desempenho por disciplina</p>
+            {[...byDiscipline.entries()].map(([discipline, summary]) => {
+              const evaluatedInDiscipline = summary.correct + summary.wrong;
+              const percent = evaluatedInDiscipline ? Math.round(summary.correct / evaluatedInDiscipline * 100) : 0;
+              return <p key={discipline} className="flex justify-between gap-3 text-sm text-slate-600 dark:text-slate-300"><span>{discipline}</span><span>{percent}% · {summary.correct} acertos, {summary.wrong} erros, {summary.blank} brancos</span></p>;
+            })}
+          </div>
+        </div>
+        <div className="card space-y-3">
+          <SectionHeader title="Revisar questões" />
+          {answers.map((item, index) => (
+            <details key={item.question.id} className="border-b border-slate-200 py-3 last:border-0 dark:border-slate-700">
+              <summary className="cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-200">
+                Questão {index + 1} · {item.question.disciplina} · {item.correct === null ? 'Em branco' : item.correct ? 'Acerto' : 'Erro'}
+              </summary>
+              <div className="mt-3"><QuestionCard question={item.question} selectedAnswer={item.answer} answerConfirmed /></div>
+            </details>
+          ))}
+          <button type="button" onClick={onFinish} className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Voltar ao dashboard</button>
+        </div>
       </div>
     );
   }
 
+  if (!currentQuestion) {
+    return (
+      <div className="card space-y-4 pb-28">
+        <SectionHeader title="Configurar simulado" />
+        {notice && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">{notice}</p>}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label className="space-y-2 text-sm text-slate-700 dark:text-slate-200">Questões
+            <select value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              {[5, 10, 15, 20, 30, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="space-y-2 text-sm text-slate-700 dark:text-slate-200">Tempo
+            <select value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              {[20, 40, 60, 90, 120].map((value) => <option key={value} value={value}>{value} min</option>)}
+            </select>
+          </label>
+          <label className="space-y-2 text-sm text-slate-700 dark:text-slate-200">Penalidade por erro
+            <select value={penalty} onChange={(event) => setPenalty(Number(event.target.value))} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              {[0, 0.5, 1].map((value) => <option key={value} value={value}>-{value}</option>)}
+            </select>
+          </label>
+        </div>
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium text-slate-700 dark:text-slate-200">Disciplinas</legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {disciplines.map((discipline) => (
+              <label key={discipline} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <input type="checkbox" checked={selectedDisciplines.includes(discipline)} onChange={(event) => setSelectedDisciplines((current) => event.target.checked ? [...current, discipline] : current.filter((item) => item !== discipline))} />
+                {discipline}
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Nenhuma selecionada: todas as disciplinas.</p>
+        </fieldset>
+        <div className="flex flex-wrap gap-3">
+          <button type="button" onClick={() => onStart(selectedDisciplines, quantity, minutes, penalty)} className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700">Iniciar simulado</button>
+          <button type="button" onClick={onFinish} className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium dark:border-slate-700">Voltar</button>
+        </div>
+      </div>
+    );
+  }
+
+  const minutesLeft = Math.floor(remainingSeconds / 60);
+  const secondsLeft = remainingSeconds % 60;
   return (
     <div className="space-y-5 pb-28">
-      <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-        <p className="text-xs uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Progresso do simulado</p>
-        <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-          <div className="h-full bg-brand-500 transition-all" style={{ width: `${((currentIndex + 1) / total) * 100}%` }} />
+      <div className="card flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase text-slate-500 dark:text-slate-400">Progresso</p>
+          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{currentIndex + 1} de {total} · {Object.keys(session?.answers ?? {}).length} respondidas</p>
         </div>
-        <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-slate-200">{currentIndex + 1} de {total}</p>
+        <p role="timer" aria-live="off" className="font-mono text-xl font-bold tabular-nums text-slate-900 dark:text-slate-100">{String(minutesLeft).padStart(2, '0')}:{String(secondsLeft).padStart(2, '0')}</p>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+          <div className="h-full bg-brand-500" style={{ width: `${((currentIndex + 1) / total) * 100}%` }} />
+        </div>
       </div>
 
-      <QuestionCard question={currentQuestion} index={currentIndex + 1} total={total} onAnswer={onAnswer} />
+      <QuestionCard question={currentQuestion} index={currentIndex + 1} total={total} selectedAnswer={answer} onAnswer={onAnswer} />
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={onFinish}
-          className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium dark:border-slate-700 transition hover:bg-slate-50 dark:hover:bg-slate-800"
-        >
-          Finalizar simulado
-        </button>
+      <div className="flex flex-wrap justify-between gap-3">
+        <button type="button" disabled={currentIndex === 0} onClick={() => onMove(currentIndex - 1)} className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium disabled:opacity-40 dark:border-slate-700">Anterior</button>
+        <div className="flex flex-wrap gap-3">
+          <button type="button" onClick={() => onAnswer(null)} className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium dark:border-slate-700">Deixar em branco</button>
+          {currentIndex < total - 1 && <button type="button" onClick={() => onMove(currentIndex + 1)} className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white">Próxima</button>}
+          <button type="button" onClick={() => { if (window.confirm('Finalizar o simulado e registrar as respostas?')) onFinish(); }} className="rounded-xl border border-rose-200 px-4 py-3 text-sm font-medium text-rose-700 dark:border-rose-800 dark:text-rose-200">Finalizar</button>
+        </div>
+        <button type="button" disabled={currentIndex >= total - 1} onClick={() => onMove(currentIndex + 1)} className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium disabled:opacity-40 dark:border-slate-700">Próxima</button>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  const study = useStudyApp();
+
+  if (!study.storageReady) {
+    return <main className="flex min-h-screen items-center justify-center bg-slate-100 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">Carregando dados locais...</main>;
+  }
+
+  let page: React.ReactNode;
+
+  switch (study.view) {
+    case 'dashboard':
+      page = (
+        <DashboardPage
+          stats={study.stats}
+          recommendation={study.recommendation}
+          reviewItems={study.reviewItems}
+          setView={study.setView}
+          startTraining={study.startTraining}
+        />
+      );
+      break;
+    case 'train':
+      page = (
+        <TrainPage
+          questions={study.trainingQueue}
+          startTraining={study.startTraining}
+          currentQuestion={study.currentTrainingQuestion}
+          index={study.trainingIndex}
+          total={study.trainingQueue.length}
+          selectedAnswer={study.selectedAnswer}
+          answerConfirmed={study.answerConfirmed}
+          onAnswer={(answer) => {
+            if (study.currentTrainingQuestion) study.recordAnswer(study.currentTrainingQuestion, answer);
+          }}
+          onToggleMark={(mark) => {
+            if (study.currentTrainingQuestion) study.toggleMark(study.currentTrainingQuestion.id, mark);
+          }}
+          marks={study.state.marks}
+          nextQuestion={study.nextTrainingQuestion}
+          disciplines={study.disciplines.map((discipline) => discipline.name)}
+          trainingNotice={study.trainingNotice}
+        />
+      );
+      break;
+    case 'caderno':
+      page = (
+        <CadernoPage
+          items={study.notebookItems}
+          defaultCategory="NAO_VISTAS"
+          onReviewNow={() => study.startTraining({ quantidade: study.notebookItems.filter((item) => item.vencida).length, mode: 'REVISAO' })}
+        />
+      );
+      break;
+    case 'review':
+      page = (
+        <CadernoPage
+          items={study.notebookItems}
+          defaultCategory="REVISOES_VENCIDAS"
+          onReviewNow={() => study.startTraining({ quantidade: study.notebookItems.filter((item) => item.vencida).length, mode: 'REVISAO' })}
+        />
+      );
+      break;
+    case 'prioridades':
+      page = (
+        <div className="card space-y-4">
+          <SectionHeader title="Prioridade por assunto" />
+          {study.topicProgress.length ? study.topicProgress.map((topic) => {
+            const answered = topic.correct + topic.wrong;
+            const priority = topic.priorityScore >= 65 ? 'alta' : topic.priorityScore >= 35 ? 'média' : 'baixa';
+            const trend = topic.trend === 'down' ? 'Queda recente' : topic.trend === 'up' ? 'Alta recente' : topic.trend === 'stable' ? 'Estável' : 'Amostra insuficiente';
+            return (
+              <div key={`${topic.disciplina}-${topic.assunto}`} className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 py-3 last:border-0 dark:border-slate-700">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-slate-800 dark:text-slate-100">{topic.assunto}</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{topic.disciplina} · {topic.questionCount} questões · {answered ? `${Math.round(topic.accuracy * 100)}% em ${answered}` : 'sem tentativas'}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{trend} · {topic.overdueReviews} vencidas · {topic.unseenQuestions} não vistas{answered < 5 ? ' · amostra pequena' : ''}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <PriorityBadge priority={priority} />
+                  <span className="text-sm tabular-nums text-slate-500 dark:text-slate-400">{topic.priorityScore}/100</span>
+                  <button type="button" onClick={() => study.startTraining({ disciplina: topic.disciplina, assunto: topic.assunto, quantidade: 10 })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
+                    Treinar
+                  </button>
+                </div>
+              </div>
+            );
+          }) : <p className="text-sm text-slate-500 dark:text-slate-400">Adicione questões para calcular prioridades.</p>}
+        </div>
+      );
+      break;
+    case 'performance':
+      page = <PerformancePage attempts={study.state.attempts} />;
+      break;
+    case 'settings':
+      page = (
+        <SettingsPage
+          theme={study.state.settings.theme}
+          onThemeToggle={() => study.updateSettings({ theme: study.state.settings.theme === 'dark' ? 'light' : 'dark' })}
+          onExport={study.exportJson}
+          onImport={study.importJson}
+          onReset={study.resetApp}
+        />
+      );
+      break;
+    case 'simulado':
+      page = (
+        <SimuladoPage
+          currentQuestion={study.simuladoCurrent}
+          currentIndex={study.simuladoSession?.index ?? 0}
+          total={study.simuladoSession?.questions.length ?? 0}
+          answer={study.simuladoCurrent ? study.simuladoSession?.answers[study.simuladoCurrent.id] ?? null : null}
+          session={study.simuladoSession}
+          disciplines={study.disciplines.map((discipline) => discipline.name)}
+          defaults={study.state.settings.simulado}
+          notice={study.simuladoNotice}
+          onAnswer={study.answerSimuladoQuestion}
+          onMove={study.moveSimuladoQuestion}
+          onStart={study.startSimulado}
+          onFinish={study.finishSimulado}
+        />
+      );
+      break;
+    case 'disciplinas':
+      page = (
+        <div className="card space-y-4">
+          <SectionHeader title="Disciplinas" />
+          <div className="divide-y divide-slate-200 dark:divide-slate-700">
+            {study.disciplines.map((discipline) => (
+              <div key={discipline.name} className="flex flex-wrap items-center justify-between gap-4 py-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-800 dark:text-slate-100">{discipline.name}</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{discipline.count} questões · {discipline.totalAnswered} respostas · {discipline.percentual}% de acerto</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Tendência: {discipline.trend === 'down' ? 'queda' : discipline.trend === 'up' ? 'alta' : discipline.trend === 'stable' ? 'estável' : 'amostra insuficiente'}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <PriorityBadge priority={discipline.prioridadeScore >= 65 ? 'alta' : discipline.prioridadeScore >= 35 ? 'média' : 'baixa'} />
+                  <span className="text-sm tabular-nums text-slate-500 dark:text-slate-400">{discipline.prioridadeScore}/100</span>
+                  <button type="button" onClick={() => study.startTraining({ disciplina: discipline.name, quantidade: 10 })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">Treinar</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+      break;
+    case 'historico':
+      page = <HistoryPage attempts={study.history} questions={study.state.questions} disciplines={study.disciplines.map((discipline) => discipline.name)} />;
+      break;
+  }
+
+  return (
+    <Layout
+      view={study.view}
+      setView={study.setView}
+      state={study.state}
+      recommendation={study.recommendation}
+      reviewItems={study.reviewItems}
+    >
+      {page}
+    </Layout>
   );
 }

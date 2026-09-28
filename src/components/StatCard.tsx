@@ -45,6 +45,7 @@ interface QuestionCardProps {
   total?: number;
   selectedAnswer?: AnswerValue | null;
   answerConfirmed?: boolean;
+  disabled?: boolean;
   onAnswer?: (answer: AnswerValue) => void;
   onToggleMark?: (mark: 'favorita' | 'revisar' | 'pegadinha' | 'dificil') => void;
   currentMark?: { favorita?: boolean; revisar?: boolean; pegadinha?: boolean; dificil?: boolean };
@@ -56,6 +57,7 @@ export function QuestionCard({
   total,
   selectedAnswer,
   answerConfirmed,
+  disabled = false,
   onAnswer,
   onToggleMark,
   currentMark,
@@ -86,8 +88,9 @@ export function QuestionCard({
           <button
             key={button.value}
             aria-label={`Marcar resposta como ${button.label}`}
+            disabled={disabled}
             onClick={() => onAnswer?.(button.value)}
-            className={`rounded-2xl border px-5 py-4 text-lg font-semibold transition ${
+            className={`rounded-2xl border px-5 py-4 text-lg font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
               selectedAnswer === button.value
                 ? button.tone === 'success'
                   ? 'border-emerald-500 bg-emerald-500 text-white'

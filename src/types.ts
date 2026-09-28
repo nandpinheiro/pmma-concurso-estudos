@@ -26,6 +26,10 @@ export interface Question {
   dificuldade: Difficulty;
   fonte: string;
   tags: string[];
+  active?: boolean;
+  pegadinha?: string;
+  year?: number;
+  organization?: string;
   isDemo?: boolean;
 }
 
@@ -34,13 +38,53 @@ export interface AnswerRecord {
   questionId: string;
   disciplina: string;
   assunto: string;
-  resposta: AnswerValue | null;
+  resposta: AnswerValue | 'EM_BRANCO' | null;
   acertou: boolean | null;
   tempoGasto: number;
   data: string;
   dificuldade: Difficulty;
   tentativa: number;
   revisada: boolean;
+  startedAt?: string;
+  answeredAt?: string;
+  sessionId?: string;
+  mode?: 'TREINO' | 'REVISAO' | 'SIMULADO' | 'ERROS' | 'NAO_VISTAS';
+  confidence?: number;
+}
+
+export interface QuestionProgress {
+  questionId: string;
+  timesSeen: number;
+  timesCorrect: number;
+  timesWrong: number;
+  lastSeenAt?: string;
+  lastAnswer?: AnswerValue;
+  currentLevel: number;
+  nextReviewAt?: string;
+  consecutiveCorrect: number;
+  consecutiveWrong: number;
+  averageResponseTime?: number;
+  lastWasCorrect?: boolean;
+}
+
+export interface TopicProgress {
+  disciplina: string;
+  assunto: string;
+  questionCount: number;
+  questionsSeen: number;
+  correct: number;
+  wrong: number;
+  accuracy: number;
+  recentAccuracy: number | null;
+  confidence: number;
+  repeatedErrors: number;
+  recurringErrors: number;
+  errorClassification: 'ERRO_ISOLADO' | 'ERRO_RECENTE' | 'ERRO_RECORRENTE' | 'ERRO_CRITICO' | null;
+  unseenQuestions: number;
+  overdueReviews: number;
+  masteryScore: number;
+  priorityScore: number;
+  trend: 'up' | 'down' | 'stable' | 'insufficient';
 }
 
 export interface MarkState {
@@ -57,6 +101,7 @@ export interface UserSettings {
   simulado: {
     quantidade: number;
     tempoMinutos: number;
+    penalidade: number;
     incluirIneditas: boolean;
     disciplinas: string[];
   };
@@ -69,6 +114,7 @@ export interface Recommendation {
   quantidade: number;
   prioridade: ReviewPriority;
   motivo: string;
+  mode?: 'TREINO' | 'REVISAO' | 'ERROS' | 'NAO_VISTAS';
 }
 
 export interface StudySession {
@@ -85,6 +131,8 @@ export interface DisciplineSummary {
   acertos: number;
   erros: number;
   percentual: number;
+  prioridadeScore: number;
+  trend: 'up' | 'down' | 'stable' | 'insufficient';
 }
 
 export interface ReviewItem {
@@ -96,12 +144,28 @@ export interface ReviewItem {
   ultimaResposta: AnswerValue | null;
   proximaRevisao: string;
   prioridade: ReviewPriority;
+  vencida?: boolean;
+}
+
+export type NotebookCategory =
+  | 'ERROS_RECENTES'
+  | 'ERROS_RECORRENTES'
+  | 'REVISOES_VENCIDAS'
+  | 'QUESTOES_DIFICEIS'
+  | 'FAVORITAS'
+  | 'PEGADINHAS'
+  | 'NAO_VISTAS';
+
+export interface NotebookItem extends ReviewItem {
+  enunciado: string;
+  categorias: NotebookCategory[];
 }
 
 export interface DashboardStats {
   respondidas: number;
   acertos: number;
   erros: number;
+  emBranco: number;
   percentual: number;
   naoRespondidas: number;
   paraRevisao: number;

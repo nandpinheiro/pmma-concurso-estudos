@@ -20,6 +20,7 @@ const navItems: Array<{ key: ViewKey; label: string; subtitle: string }> = [
   { key: 'performance', label: 'Desempenho', subtitle: 'Estatísticas' },
   { key: 'prioridades', label: 'Prioridades', subtitle: 'Foco' },
   { key: 'historico', label: 'Histórico', subtitle: 'Respostas' },
+  { key: 'simulado', label: 'Simulado', subtitle: 'Prova' },
   { key: 'settings', label: 'Configurações', subtitle: 'Dados' },
 ];
 
@@ -84,7 +85,7 @@ export function Layout({ view, setView, state, children, recommendation, reviewI
 
       <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 lg:hidden">
         <div className="mx-auto grid max-w-md grid-cols-4 gap-1 px-2 py-2 text-center text-[11px]">
-          {navItems.slice(0, 8).map((item) => (
+          {navItems.map((item) => (
             <button
               key={item.key}
               type="button"
