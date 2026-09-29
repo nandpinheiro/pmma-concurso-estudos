@@ -21,6 +21,7 @@ const navItems: Array<{ key: ViewKey; label: string; subtitle: string }> = [
   { key: 'prioridades', label: 'Prioridades', subtitle: 'Foco' },
   { key: 'historico', label: 'Histórico', subtitle: 'Respostas' },
   { key: 'simulado', label: 'Simulado', subtitle: 'Prova' },
+  { key: 'sessoes', label: 'Sessões', subtitle: 'Treinos' },
   { key: 'settings', label: 'Configurações', subtitle: 'Dados' },
 ];
 

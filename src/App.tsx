@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from './components/Layout';
 import { PriorityBadge, QuestionCard, SectionHeader, StatCard } from './components/StatCard';
-import { calculatePerformance } from './algorithms/performanceAlgorithm';
+import { calculateDailyPerformance, calculatePerformance } from './algorithms/performanceAlgorithm';
 import { calculateCebraspeScore } from './algorithms/cebraspeAlgorithm';
+import { calculateTagPerformance } from './algorithms/tagPerformanceAlgorithm';
 import type { ExportKind } from './services/importExportService';
 import { useStudyApp } from './hooks/useStudyApp';
 import type { AnswerValue, Question, ViewKey, AnswerRecord, Recommendation, UserSettings, NotebookCategory, NotebookItem } from './types';
@@ -13,6 +14,7 @@ interface DashboardPageProps {
     acertos: number;
     erros: number;
     emBranco: number;
+    avaliadas: number;
     percentual: number;
     naoRespondidas: number;
     paraRevisao: number;
@@ -22,14 +24,17 @@ interface DashboardPageProps {
     sequenciaAtual: number;
     respondidasHoje: number;
     tempoMedio: number;
+    metaDiaria: number;
+    progressoDiario: number;
   };
   recommendation: Recommendation;
   reviewItems: Array<{ disciplina: string; assunto: string; data: string; erros: number; ultimaResposta: 'CERTO' | 'ERRADO' | null; prioridade: 'alta' | 'média' | 'baixa'; questionId: string }>
   setView: (view: ViewKey) => void;
-  startTraining: (filters?: { disciplina?: string; assunto?: string; quantidade?: number; mode?: Recommendation['mode'] }) => void;
+  startTraining: (filters?: { disciplina?: string; assunto?: string; priorityTopic?: string; quantidade?: number; mode?: Recommendation['mode'] }) => void;
+  sessions: Array<{ id: string; startedAt: string; mode: string; answered: number; correct: number; wrong: number; blank: number; accuracy?: number }>;
 }
 
-export function DashboardPage({ stats, recommendation, reviewItems, setView, startTraining }: DashboardPageProps) {
+export function DashboardPage({ stats, recommendation, reviewItems, setView, startTraining, sessions }: DashboardPageProps) {
   const nextPriority = React.useMemo(() => reviewItems.slice(0, 3), [reviewItems]);
 
   return (
@@ -39,7 +44,7 @@ export function DashboardPage({ stats, recommendation, reviewItems, setView, sta
         <StatCard label="Acertos" value={stats.acertos} tone="success" helper="respostas corretas" />
         <StatCard label="Erros" value={stats.erros} tone="danger" helper="respostas erradas" />
         <StatCard label="Em branco" value={stats.emBranco} tone="warning" helper="itens sem resposta" />
-        <StatCard label="Aproveitamento" value={`${stats.percentual}%`} tone="warning" helper={stats.respondidas < 5 ? `${stats.acertos}/${stats.respondidas} respostas; amostra pequena` : `${stats.acertos}/${stats.respondidas} respostas`} />
+        <StatCard label="Aproveitamento" value={`${stats.percentual}%`} tone="warning" helper={stats.avaliadas < 5 ? `${stats.acertos}/${stats.avaliadas} avaliadas; amostra pequena` : `${stats.acertos}/${stats.avaliadas} avaliadas`} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
@@ -54,7 +59,7 @@ export function DashboardPage({ stats, recommendation, reviewItems, setView, sta
             </div>
             <button
               type="button"
-              onClick={() => startTraining({ disciplina: recommendation.disciplina || undefined, assunto: recommendation.assunto === 'Questões não vistas' ? undefined : recommendation.assunto, quantidade: recommendation.quantidade, mode: recommendation.mode })}
+              onClick={() => startTraining({ disciplina: recommendation.disciplina || undefined, assunto: recommendation.mode === 'ERROS' || recommendation.mode === 'REVISAO' ? undefined : recommendation.assunto === 'Questões não vistas' ? undefined : recommendation.assunto, priorityTopic: recommendation.mode === 'ERROS' ? recommendation.assunto : undefined, quantidade: recommendation.quantidade, mode: recommendation.mode })}
               disabled={!recommendation.quantidade}
               className="mt-3 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition"
             >
@@ -94,6 +99,14 @@ export function DashboardPage({ stats, recommendation, reviewItems, setView, sta
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="card">
+          <SectionHeader title="Meta diária" />
+          <div className="flex items-center justify-between text-sm text-slate-600 dark:text-slate-300">
+            <span>{Math.min(stats.progressoDiario, stats.metaDiaria)}/{stats.metaDiaria} questões</span>
+            <span>{Math.round(Math.min(1, stats.progressoDiario / Math.max(1, stats.metaDiaria)) * 100)}%</span>
+          </div>
+          <div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full bg-brand-500" style={{ width: `${Math.min(100, stats.progressoDiario / Math.max(1, stats.metaDiaria) * 100)}%` }} /></div>
+        </div>
+        <div className="card">
           <SectionHeader title="Resumo rápido" />
           <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
             <li>Melhor: <span className="font-semibold text-slate-800 dark:text-slate-100">{stats.melhorDisciplina}</span></li>
@@ -114,6 +127,11 @@ export function DashboardPage({ stats, recommendation, reviewItems, setView, sta
           </div>
         </div>
       </div>
+
+      <div className="card">
+        <SectionHeader title="Últimas sessões" right={<button type="button" onClick={() => setView('sessoes')} className="text-sm font-medium text-brand-700 dark:text-brand-200">Ver todas</button>} />
+        {sessions.length ? <div className="grid gap-3 md:grid-cols-3">{sessions.slice(0, 3).map((session) => <div key={session.id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700"><p className="font-semibold text-slate-800 dark:text-slate-100">{session.mode}</p><p className="text-xs text-slate-500 dark:text-slate-400">{new Date(session.startedAt).toLocaleString('pt-BR')}</p><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{session.correct} acertos · {session.wrong} erros · {session.blank} brancos</p><p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{session.accuracy === undefined ? 'Em andamento' : `${Math.round(session.accuracy * 100)}%`}</p></div>)}</div> : <p className="text-sm text-slate-500 dark:text-slate-400">Nenhuma sessão registrada.</p>}
+      </div>
     </div>
   );
 }
@@ -126,7 +144,7 @@ interface TrainPageProps {
   total: number;
   selectedAnswer: 'CERTO' | 'ERRADO' | null;
   answerConfirmed: boolean;
-  onAnswer: (answer: 'CERTO' | 'ERRADO') => void;
+  onAnswer: (answer: 'CERTO' | 'ERRADO', confidence?: number) => void;
   onToggleMark: (mark: 'favorita' | 'revisar' | 'pegadinha' | 'dificil') => void;
   marks: Record<string, { favorita?: boolean; revisar?: boolean; pegadinha?: boolean; dificil?: boolean }>;
   nextQuestion: () => void;
@@ -151,6 +169,9 @@ export function TrainPage({
 }: TrainPageProps) {
   const [disciplina, setDisciplina] = useState('');
   const [quantidade, setQuantidade] = useState(10);
+  const [confidence, setConfidence] = useState<number | undefined>();
+
+  useEffect(() => setConfidence(undefined), [currentQuestion?.id]);
 
   useEffect(() => {
     if (!currentQuestion) return;
@@ -159,8 +180,8 @@ export function TrainPage({
       if (event.ctrlKey || event.metaKey || event.altKey || target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName ?? '')) return;
 
       const key = event.key.toLowerCase();
-      if (!answerConfirmed && key === 'c') onAnswer('CERTO');
-      else if (!answerConfirmed && key === 'e') onAnswer('ERRADO');
+      if (!answerConfirmed && key === 'c') onAnswer('CERTO', confidence);
+      else if (!answerConfirmed && key === 'e') onAnswer('ERRADO', confidence);
       else if (answerConfirmed && (key === 'n' || key === 'enter')) nextQuestion();
       else if (key === 'r') onToggleMark('revisar');
       else return;
@@ -169,7 +190,7 @@ export function TrainPage({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [answerConfirmed, currentQuestion, nextQuestion, onAnswer, onToggleMark]);
+  }, [answerConfirmed, confidence, currentQuestion, nextQuestion, onAnswer, onToggleMark]);
 
   if (!currentQuestion) {
     return (
@@ -228,10 +249,20 @@ export function TrainPage({
         selectedAnswer={selectedAnswer}
         answerConfirmed={answerConfirmed}
         disabled={answerConfirmed}
-        onAnswer={onAnswer}
+        onAnswer={(answer) => onAnswer(answer, confidence)}
         onToggleMark={onToggleMark}
         currentMark={marks[currentQuestion.id]}
       />
+
+      {!answerConfirmed && (
+        <label className="flex max-w-xs items-center gap-3 text-sm text-slate-700 dark:text-slate-200">
+          <span>Confiança</span>
+          <select value={confidence ?? ''} onChange={(event) => setConfidence(event.target.value ? Number(event.target.value) : undefined)} className="rounded-xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+            <option value="">Opcional</option>
+            {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value} de 5</option>)}
+          </select>
+        </label>
+      )}
 
       {answerConfirmed && (
         <div className="flex flex-wrap gap-3">
@@ -312,6 +343,7 @@ export function CadernoPage({ items, onReviewNow, defaultCategory }: CadernoPage
                 <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">{item.enunciado}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {item.categorias.map((itemCategory) => <span key={itemCategory} className="pill bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">{notebookCategoryLabels[itemCategory]}</span>)}
+                  {item.confidenceSignal && <span className="pill bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200">{item.confidenceSignal === 'ERRO_ALTA_CONFIANCA' ? 'Erro com alta confiança' : 'Acerto com baixa confiança'}</span>}
                 </div>
                 <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-3">
                   <span>Erros: {item.erros}</span>
@@ -332,10 +364,15 @@ export function CadernoPage({ items, onReviewNow, defaultCategory }: CadernoPage
 
 interface PerformancePageProps {
   attempts: AnswerRecord[]; 
+  questions: Question[];
 }
 
-export function PerformancePage({ attempts }: PerformancePageProps) {
+export function PerformancePage({ attempts, questions }: PerformancePageProps) {
   const performance = calculatePerformance(attempts);
+  const tagPerformance = calculateTagPerformance(questions, attempts);
+  const [period, setPeriod] = useState<'7' | '30' | '90' | 'all'>('30');
+  const dailyPerformance = calculateDailyPerformance(attempts, period === 'all' ? undefined : Number(period));
+  const maxDailyAttempts = Math.max(1, ...dailyPerformance.map((item) => item.attempts));
   const overallPercent = performance.windows.all.accuracy === null ? null : Math.round(performance.windows.all.accuracy * 100);
 
   return (
@@ -379,6 +416,26 @@ export function PerformancePage({ attempts }: PerformancePageProps) {
       </div>
 
       <div className="card">
+        <SectionHeader title="Tempo de resposta" />
+        {performance.time.averageSeconds === null ? (
+          <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum tempo registrado.</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 text-sm text-slate-600 dark:text-slate-300">
+            <span>Média: <strong>{performance.time.averageSeconds.toFixed(1)}s</strong></span>
+            <span>Mediana: <strong>{performance.time.medianSeconds?.toFixed(1)}s</strong></span>
+            <span>Mais rápida: <strong>{performance.time.fastestSeconds?.toFixed(1)}s</strong></span>
+            <span>Mais lenta: <strong>{performance.time.slowestSeconds?.toFixed(1)}s</strong></span>
+            <span>Muito rápidas/lentas: <strong>{performance.time.veryFast}/{performance.time.verySlow}</strong></span>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <SectionHeader title="Evolução diária" right={<select value={period} onChange={(event) => setPeriod(event.target.value as typeof period)} className="rounded-lg border border-slate-200 bg-white p-2 text-sm dark:border-slate-700 dark:bg-slate-900"><option value="7">7 dias</option><option value="30">30 dias</option><option value="90">90 dias</option><option value="all">Tudo</option></select>} />
+        {dailyPerformance.length ? <div className="space-y-2">{dailyPerformance.slice(-30).map((item) => <div key={item.date} className="grid grid-cols-[5rem_1fr_4rem] items-center gap-2 text-xs text-slate-600 dark:text-slate-300"><span>{new Date(`${item.date}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span><div className="h-4 overflow-hidden rounded bg-slate-100 dark:bg-slate-800"><div className="h-full bg-brand-500" style={{ width: `${item.attempts / maxDailyAttempts * 100}%` }} /></div><span className="text-right">{item.accuracy === null ? '—' : `${Math.round(item.accuracy * 100)}%`}</span></div>)}</div> : <p className="text-sm text-slate-500 dark:text-slate-400">Nenhuma tentativa registrada no período.</p>}
+      </div>
+
+      <div className="card">
         <SectionHeader title="Desempenho por disciplina" />
         <div className="space-y-3">
           {performance.byDiscipline.length ? (
@@ -386,7 +443,7 @@ export function PerformancePage({ attempts }: PerformancePageProps) {
               <div key={item.discipline}>
                 <div className="mb-1 flex items-center justify-between text-sm text-slate-600 dark:text-slate-300">
                   <span className="truncate">{item.discipline}</span>
-                  <span className="ml-2 shrink-0 font-semibold">{item.accuracy === null ? '—' : `${Math.round(item.accuracy * 100)}%`} · {item.attempts} questões</span>
+                  <span className="ml-2 shrink-0 text-right font-semibold">{item.accuracy === null ? '—' : `${Math.round(item.accuracy * 100)}%`} · {item.attempts} questões<br /><span className="text-xs font-normal">média {item.time.averageSeconds === null ? '—' : `${item.time.averageSeconds.toFixed(1)}s`}</span></span>
                 </div>
                 <div className="h-3 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
                   <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${item.accuracy === null ? 0 : item.accuracy * 100}%` }} />
@@ -397,6 +454,15 @@ export function PerformancePage({ attempts }: PerformancePageProps) {
             <p className="text-sm text-slate-500 dark:text-slate-400">Nenhuma tentativa registrada.</p>
           )}
         </div>
+      </div>
+
+      <div className="card">
+        <SectionHeader title="Desempenho por tipo de questão" />
+        {tagPerformance.length ? (
+          <div className="space-y-3">
+            {tagPerformance.slice(0, 10).map((item) => <div key={item.tag} className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600 dark:text-slate-300"><span className="font-medium">{item.tag}</span><span>{Math.round(item.errorRate * 100)}% de erro · {item.attempts} questões · {item.correct} acertos / {item.wrong} erros</span></div>)}
+          </div>
+        ) : <p className="text-sm text-slate-500 dark:text-slate-400">Ainda não há tentativas suficientes por tag.</p>}
       </div>
     </div>
   );
@@ -500,14 +566,59 @@ export function HistoryPage({ attempts, questions, disciplines }: HistoryPagePro
 }
 
 interface SettingsPageProps {
-  theme: 'light' | 'dark';
-  onThemeToggle: () => void;
+  theme: 'light' | 'dark' | 'system';
+  onThemeChange: (theme: 'light' | 'dark' | 'system') => void;
   onExport: (kind: ExportKind) => void;
   onImport: (file: File) => void;
-  onReset: () => void;
+  onReset: (scope: 'all' | 'progress' | 'history' | 'questions') => void;
+  dailyGoal: number;
+  onDailyGoalChange: (goal: number) => void;
 }
 
-export function SettingsPage({ theme, onThemeToggle, onExport, onImport, onReset }: SettingsPageProps) {
+interface SessionsPageProps {
+  sessions: Array<{
+    id: string;
+    startedAt: string;
+    finishedAt?: string;
+    mode: string;
+    questionIds: string[];
+    answered: number;
+    correct: number;
+    wrong: number;
+    blank: number;
+    accuracy?: number;
+    totalTimeSeconds?: number;
+  }>;
+}
+
+export function SessionsPage({ sessions }: SessionsPageProps) {
+  const ordered = [...sessions].sort((left, right) => new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime());
+  return (
+    <div className="space-y-5 pb-28">
+      <div className="card">
+        <SectionHeader title="Sessões de estudo" right={<span className="text-sm text-slate-500 dark:text-slate-400">{ordered.length} sessões</span>} />
+        <div className="space-y-3">
+          {ordered.length ? ordered.map((session) => (
+            <div key={session.id} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-slate-800 dark:text-slate-100">{session.mode}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{new Date(session.startedAt).toLocaleString('pt-BR')} · {session.questionIds.length} questões</p>
+                </div>
+                <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{session.accuracy === undefined ? 'Em andamento' : `${Math.round(session.accuracy * 100)}%`}</span>
+              </div>
+              <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-5">
+                <span>Respondidas: {session.answered}</span><span>Acertos: {session.correct}</span><span>Erros: {session.wrong}</span><span>Brancos: {session.blank}</span><span>Tempo: {session.totalTimeSeconds === undefined ? '—' : `${Math.round(session.totalTimeSeconds)}s`}</span>
+              </div>
+            </div>
+          )) : <p className="text-sm text-slate-500 dark:text-slate-400">Nenhuma sessão concluída.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SettingsPage({ theme, onThemeChange, onExport, onImport, onReset, dailyGoal, onDailyGoalChange }: SettingsPageProps) {
   return (
     <div className="space-y-6 pb-28">
       <div className="card space-y-4">
@@ -517,14 +628,15 @@ export function SettingsPage({ theme, onThemeToggle, onExport, onImport, onReset
             <p className="font-medium text-slate-800 dark:text-slate-100">Modo escuro</p>
             <p className="text-sm text-slate-500 dark:text-slate-400">Salvar preferência no navegador</p>
           </div>
-          <button
-            type="button"
-            onClick={onThemeToggle}
-            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white dark:bg-slate-100 dark:text-slate-900 transition hover:opacity-90"
-          >
-            {theme === 'dark' ? 'Claro' : 'Escuro'}
-          </button>
+          <select value={theme} onChange={(event) => onThemeChange(event.target.value as 'light' | 'dark' | 'system')} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+            <option value="system">Sistema</option>
+            <option value="light">Claro</option>
+            <option value="dark">Escuro</option>
+          </select>
         </div>
+        <label className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-4 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-200">Meta diária
+          <select value={dailyGoal} onChange={(event) => onDailyGoalChange(Number(event.target.value))} className="rounded-xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">{[10, 20, 30, 50, 100].map((goal) => <option key={goal} value={goal}>{goal} questões</option>)}</select>
+        </label>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {([
@@ -547,17 +659,12 @@ export function SettingsPage({ theme, onThemeToggle, onExport, onImport, onReset
               aria-label="Importar arquivo de backup"
             />
           </label>
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm('Tem certeza? Todos os dados serão perdidos.')) {
-                onReset();
-              }
-            }}
-            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200 transition hover:bg-rose-100 dark:hover:bg-rose-900"
-          >
-            Resetar
-          </button>
+          {([
+            ['history', 'Apagar histórico'],
+            ['progress', 'Resetar progresso'],
+            ['questions', 'Apagar banco'],
+            ['all', 'Apagar tudo'],
+          ] as const).map(([scope, label]) => <button key={scope} type="button" onClick={() => { if (window.confirm(`${label}? Esta ação não pode ser desfeita.`)) onReset(scope); }} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200 transition hover:bg-rose-100 dark:hover:bg-rose-900">{label}</button>)}
         </div>
       </div>
     </div>
@@ -577,11 +684,12 @@ interface SimuladoPageProps {
     finished: boolean;
   } | null;
   disciplines: string[];
+  topics: string[];
   defaults: UserSettings['simulado'];
   notice: string;
   onAnswer: (answer: AnswerValue | null) => void;
   onMove: (index: number) => void;
-  onStart: (disciplines: string[], quantity: number, minutes: number, penalty: number) => void;
+  onStart: (disciplines: string[], topics: string[], difficulty: UserSettings['simulado']['dificuldade'], quantity: number, minutes: number, penalty: number) => void;
   onFinish: () => void;
 }
 
@@ -592,6 +700,7 @@ export function SimuladoPage({
   answer,
   session,
   disciplines,
+  topics,
   defaults,
   notice,
   onAnswer,
@@ -603,6 +712,8 @@ export function SimuladoPage({
   const [minutes, setMinutes] = useState(defaults.tempoMinutos);
   const [penalty, setPenalty] = useState(defaults.penalidade);
   const [selectedDisciplines, setSelectedDisciplines] = useState(defaults.disciplinas);
+  const [selectedTopic, setSelectedTopic] = useState(defaults.assuntos[0] ?? '');
+  const [difficulty, setDifficulty] = useState(defaults.dificuldade);
   const [clockNow, setClockNow] = useState(Date.now());
 
   useEffect(() => {
@@ -610,6 +721,8 @@ export function SimuladoPage({
     setMinutes(defaults.tempoMinutos);
     setPenalty(defaults.penalidade);
     setSelectedDisciplines(defaults.disciplinas);
+    setSelectedTopic(defaults.assuntos[0] ?? '');
+    setDifficulty(defaults.dificuldade);
   }, [defaults]);
 
   useEffect(() => {
@@ -687,7 +800,7 @@ export function SimuladoPage({
       <div className="card space-y-4 pb-28">
         <SectionHeader title="Configurar simulado" />
         {notice && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">{notice}</p>}
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <label className="space-y-2 text-sm text-slate-700 dark:text-slate-200">Questões
             <select value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
               {[5, 10, 15, 20, 30, 50, 100].map((value) => <option key={value} value={value}>{value}</option>)}
@@ -703,6 +816,12 @@ export function SimuladoPage({
               {[0, 0.5, 1].map((value) => <option key={value} value={value}>-{value}</option>)}
             </select>
           </label>
+          <label className="space-y-2 text-sm text-slate-700 dark:text-slate-200">Assunto
+            <select value={selectedTopic} onChange={(event) => setSelectedTopic(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><option value="">Todos</option>{topics.map((topic) => <option key={topic} value={topic}>{topic}</option>)}</select>
+          </label>
+          <label className="space-y-2 text-sm text-slate-700 dark:text-slate-200">Dificuldade
+            <select value={difficulty} onChange={(event) => setDifficulty(event.target.value as typeof difficulty)} className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><option value="todas">Todas</option><option value="fácil">Fácil</option><option value="média">Média</option><option value="difícil">Difícil</option></select>
+          </label>
         </div>
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium text-slate-700 dark:text-slate-200">Disciplinas</legend>
@@ -717,7 +836,7 @@ export function SimuladoPage({
           <p className="text-xs text-slate-500 dark:text-slate-400">Nenhuma selecionada: todas as disciplinas.</p>
         </fieldset>
         <div className="flex flex-wrap gap-3">
-          <button type="button" onClick={() => onStart(selectedDisciplines, quantity, minutes, penalty)} className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700">Iniciar simulado</button>
+          <button type="button" onClick={() => onStart(selectedDisciplines, selectedTopic ? [selectedTopic] : [], difficulty, quantity, minutes, penalty)} className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700">Iniciar simulado</button>
           <button type="button" onClick={onFinish} className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium dark:border-slate-700">Voltar</button>
         </div>
       </div>
@@ -772,6 +891,7 @@ export default function App() {
           reviewItems={study.reviewItems}
           setView={study.setView}
           startTraining={study.startTraining}
+          sessions={[...study.state.sessions].sort((left, right) => new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime())}
         />
       );
       break;
@@ -785,8 +905,8 @@ export default function App() {
           total={study.trainingQueue.length}
           selectedAnswer={study.selectedAnswer}
           answerConfirmed={study.answerConfirmed}
-          onAnswer={(answer) => {
-            if (study.currentTrainingQuestion) study.recordAnswer(study.currentTrainingQuestion, answer);
+          onAnswer={(answer, confidence) => {
+            if (study.currentTrainingQuestion) study.recordAnswer(study.currentTrainingQuestion, answer, { confidence });
           }}
           onToggleMark={(mark) => {
             if (study.currentTrainingQuestion) study.toggleMark(study.currentTrainingQuestion.id, mark);
@@ -845,16 +965,18 @@ export default function App() {
       );
       break;
     case 'performance':
-      page = <PerformancePage attempts={study.state.attempts} />;
+      page = <PerformancePage attempts={study.state.attempts} questions={study.state.questions} />;
       break;
     case 'settings':
       page = (
         <SettingsPage
           theme={study.state.settings.theme}
-          onThemeToggle={() => study.updateSettings({ theme: study.state.settings.theme === 'dark' ? 'light' : 'dark' })}
+          onThemeChange={(theme) => study.updateSettings({ theme })}
           onExport={study.exportJson}
           onImport={study.importJson}
           onReset={study.resetApp}
+          dailyGoal={study.state.settings.dailyGoal}
+          onDailyGoalChange={(dailyGoal) => study.updateSettings({ dailyGoal })}
         />
       );
       break;
@@ -867,6 +989,7 @@ export default function App() {
           answer={study.simuladoCurrent ? study.simuladoSession?.answers[study.simuladoCurrent.id] ?? null : null}
           session={study.simuladoSession}
           disciplines={study.disciplines.map((discipline) => discipline.name)}
+          topics={[...new Set(study.state.questions.map((question) => question.assunto))].sort()}
           defaults={study.state.settings.simulado}
           notice={study.simuladoNotice}
           onAnswer={study.answerSimuladoQuestion}
@@ -901,6 +1024,9 @@ export default function App() {
       break;
     case 'historico':
       page = <HistoryPage attempts={study.history} questions={study.state.questions} disciplines={study.disciplines.map((discipline) => discipline.name)} />;
+      break;
+    case 'sessoes':
+      page = <SessionsPage sessions={study.state.sessions} />;
       break;
   }
 

@@ -21,17 +21,21 @@ const question: Question = {
 const initialState: AppState = {
   questions: [question],
   attempts: [],
+  sessions: [],
   marks: {},
   settings: {
     theme: 'light',
     reviewInterval: 3,
     showDemoQuestions: true,
+    dailyGoal: 20,
     simulado: {
       quantidade: 10,
       tempoMinutos: 40,
       penalidade: 1,
       incluirIneditas: true,
       disciplinas: [],
+      assuntos: [],
+      dificuldade: 'todas' as const,
     },
   },
 };
@@ -55,6 +59,19 @@ it('persiste tentativas e marcas em IndexedDB e recupera o estado em outra instÃ
   const updatedState: AppState = {
     ...initialState,
     attempts: [attempt],
+    sessions: [{
+      id: 'storage-session-1',
+      startedAt: '2026-09-28T12:00:00.000Z',
+      finishedAt: '2026-09-28T12:00:05.000Z',
+      mode: 'TREINO',
+      questionIds: [question.id],
+      answered: 1,
+      correct: 1,
+      wrong: 0,
+      blank: 0,
+      accuracy: 1,
+      totalTimeSeconds: 5,
+    }],
     marks: { [question.id]: { favorita: true, revisar: false, pegadinha: false, dificil: false } },
   };
 
@@ -63,5 +80,6 @@ it('persiste tentativas e marcas em IndexedDB e recupera o estado em outra instÃ
 
   expect(restored.questions.map((item) => item.id)).toEqual([question.id]);
   expect(restored.attempts.map((item) => item.id)).toEqual([attempt.id]);
+  expect(restored.sessions.map((item) => item.id)).toEqual(['storage-session-1']);
   expect(restored.marks[question.id].favorita).toBe(true);
 });

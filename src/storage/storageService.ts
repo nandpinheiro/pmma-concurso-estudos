@@ -1,8 +1,8 @@
-import type { AppState, MarkState, Question } from '../types';
+import type { AppState, MarkState, Question, StudySession } from '../types';
 
 const DATABASE_NAME = 'pmma-study-database';
-const DATABASE_VERSION = 1;
-const STORE_NAMES = ['questions', 'attempts', 'marks', 'settings'] as const;
+const DATABASE_VERSION = 2;
+const STORE_NAMES = ['questions', 'attempts', 'sessions', 'marks', 'settings'] as const;
 const SETTINGS_KEY = 'app';
 
 interface StoredMark {
@@ -72,6 +72,11 @@ export class IndexedDbStorageService implements StorageService {
         if (!database.objectStoreNames.contains('marks')) {
           database.createObjectStore('marks', { keyPath: 'questionId' });
         }
+        if (!database.objectStoreNames.contains('sessions')) {
+          const store = database.createObjectStore('sessions', { keyPath: 'id' });
+          store.createIndex('startedAt', 'startedAt', { unique: false });
+          store.createIndex('mode', 'mode', { unique: false });
+        }
         if (!database.objectStoreNames.contains('settings')) {
           database.createObjectStore('settings', { keyPath: 'key' });
         }
@@ -91,11 +96,13 @@ export class IndexedDbStorageService implements StorageService {
     const transaction = database.transaction(STORE_NAMES, 'readonly');
     const questionsRequest = requestResult(transaction.objectStore('questions').getAll() as IDBRequest<Question[]>);
     const attemptsRequest = requestResult(transaction.objectStore('attempts').getAll() as IDBRequest<AppState['attempts']>);
+    const sessionsRequest = requestResult(transaction.objectStore('sessions').getAll() as IDBRequest<StudySession[]>);
     const marksRequest = requestResult(transaction.objectStore('marks').getAll() as IDBRequest<StoredMark[]>);
     const settingsRequest = requestResult(transaction.objectStore('settings').get(SETTINGS_KEY) as IDBRequest<StoredSettings | undefined>);
-    const [questions, attempts, marks, settings] = await Promise.all([
+    const [questions, attempts, sessions, marks, settings] = await Promise.all([
       questionsRequest,
       attemptsRequest,
+      sessionsRequest,
       marksRequest,
       settingsRequest,
     ]);
@@ -105,6 +112,7 @@ export class IndexedDbStorageService implements StorageService {
     return {
       questions,
       attempts,
+      sessions,
       marks: Object.fromEntries(marks.map((mark) => [mark.questionId, mark.value])),
       settings: settings.value,
     };
@@ -114,6 +122,7 @@ export class IndexedDbStorageService implements StorageService {
     const transaction = database.transaction(STORE_NAMES, 'readwrite');
     const questions = transaction.objectStore('questions');
     const attempts = transaction.objectStore('attempts');
+    const sessions = transaction.objectStore('sessions');
     const marks = transaction.objectStore('marks');
     const settings = transaction.objectStore('settings');
 
@@ -130,6 +139,11 @@ export class IndexedDbStorageService implements StorageService {
       state.attempts.forEach((attempt) => attempts.put(attempt));
     } else {
       state.attempts.slice(previous.attempts.length).forEach((attempt) => attempts.put(attempt));
+    }
+
+    if (!previous || previous.sessions !== state.sessions) {
+      sessions.clear();
+      state.sessions.forEach((session) => sessions.put(session));
     }
 
     if (!previous) {

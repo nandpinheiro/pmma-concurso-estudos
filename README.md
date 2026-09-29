@@ -8,10 +8,13 @@ Aplicativo responsivo de estudos para preparação do concurso PMMA/CEBRASPE com
 - ✅ **Sistema de treino** com seleção de disciplina, assunto e quantidade
 - ✅ **Questões CERTO/ERRADO** com feedback imediato e fundamentação
 - ✅ **Caderno inteligente** com priorização automática
+- ✅ **Categorias do Caderno** para erros, vencidas, difíceis, favoritas, pegadinhas e não vistas
 - ✅ **Revisão espaçada** com algoritmo de recomendação
 - ✅ **Desempenho detalhado** por disciplina e período
 - ✅ **Histórico completo** de respostas com análise temporal
 - ✅ **Modo simulado** com cronômetro, navegação, respostas em branco e pontuação líquida CEBRASPE
+- ✅ **Sessões persistidas** com análise de acertos, erros, brancos, duração e aproveitamento
+- ✅ **Meta diária** configurável e progresso no Dashboard
 - ✅ **Persistência local** em IndexedDB, com migração do estado legado
 - ✅ **Importação validada** e exportação versionada de backup, questões, histórico e progresso
 - ✅ **PWA** com manifesto e cache offline dos recursos já carregados
@@ -64,7 +67,8 @@ src/
 │   ├── questionSelectionAlgorithm.ts
 │   ├── performanceAlgorithm.ts
 │   ├── cebraspeAlgorithm.ts
-│   └── notebookAlgorithm.ts
+│   ├── notebookAlgorithm.ts
+│   └── tagPerformanceAlgorithm.ts
 ├── services/        # Importação, exportação e validação
 │   └── importExportService.ts
 ├── data/            # Dados e questões de exemplo
@@ -153,6 +157,8 @@ O agendamento deriva os níveis do histórico de tentativas:
 
 O nível e a próxima revisão são derivados do histórico. A prioridade por assunto combina desempenho, erros recentes e recorrentes, revisões vencidas, tendência, dificuldade e questões não vistas. A confiança cresce com o tamanho da amostra; uma resposta isolada não basta para indicar domínio.
 
+A confiança opcional da resposta registra sinais estatísticos de acerto com baixa confiança e erro com alta confiança.
+
 Treinos excluem questões respondidas nas últimas 24 horas e informam quando não há conteúdo suficiente para completar a quantidade pedida. O modo de revisão seleciona apenas itens vencidos.
 
 ## 📊 Algoritmo de Prioridade
@@ -209,10 +215,11 @@ Execute `npm test`. Os testes cobrem os intervalos de revisão, amostra pequena,
 
 ## Limitações atuais
 
-- A hidratação ainda carrega questões e tentativas no estado React; IndexedDB tem índices, mas não há paginação/consultas por demanda para bancos de 10 mil ou mais itens.
-- O modo simulado não tem distribuição por assunto/dificuldade, pausa ou resumo por assunto; a penalidade é configurável e o relatório apresenta desempenho por disciplina.
-- O desempenho recente cobre as janelas de 10, 20, 30, 50, 100 e histórico; gráficos temporais de 7/30/90 dias não foram implementados.
-- Preferência de tema oferece claro/escuro, sem opção “sistema”.
+- A hidratação ainda carrega questões e tentativas no estado React; IndexedDB tem índices, mas não há consultas paginadas por demanda para bancos de 10 mil ou mais itens.
+- O modo simulado possui filtros de disciplina, assunto e dificuldade, mas ainda não tem pausa nem distribuição proporcional configurável por disciplina.
+- O desempenho cobre as janelas de 10, 20, 30, 50, 100 e histórico, além de evolução diária em 7/30/90 dias ou tudo; gráficos avançados não foram adicionados.
+- A análise de sessões está disponível, mas não há reabertura de uma sessão interrompida após recarregar a página.
+- O tema oferece claro, escuro e sistema.
 - Os dados de exemplo são demonstrativos e marcados como fictícios; não incluem questões oficiais.
 
 ## 📱 Responsividade

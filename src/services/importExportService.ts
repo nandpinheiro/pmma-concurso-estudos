@@ -1,4 +1,4 @@
-import type { AnswerRecord, AppState, Difficulty, MarkState, Question, UserSettings } from '../types';
+import type { AnswerRecord, AppState, Difficulty, MarkState, Question, StudySession, UserSettings } from '../types';
 import { deriveProgressByQuestion } from '../algorithms/reviewAlgorithm';
 
 export type ExportKind = 'backup' | 'questions' | 'history' | 'progress';
@@ -156,19 +156,50 @@ function normalizeMarks(value: unknown, questions: Question[]): Record<string, M
   return marks;
 }
 
+function normalizeSessions(value: unknown): StudySession[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isRecord(item) || !Array.isArray(item.questionIds)) return [];
+    const id = text(item.id);
+    const startedAt = text(item.startedAt);
+    if (!id || !startedAt) return [];
+    if (!item.questionIds.every((questionId) => typeof questionId === 'string')) return [];
+    const mode = item.mode;
+    if (mode !== 'TREINO' && mode !== 'REVISAO' && mode !== 'SIMULADO' && mode !== 'ERROS' && mode !== 'NAO_VISTAS') return [];
+    if (typeof item.answered !== 'number' || typeof item.correct !== 'number' || typeof item.wrong !== 'number' || typeof item.blank !== 'number') return [];
+    return [{
+      id,
+      startedAt,
+      finishedAt: text(item.finishedAt),
+      mode,
+      questionIds: item.questionIds,
+      answered: item.answered,
+      correct: item.correct,
+      wrong: item.wrong,
+      blank: item.blank,
+      accuracy: typeof item.accuracy === 'number' ? item.accuracy : undefined,
+      score: typeof item.score === 'number' ? item.score : undefined,
+      totalTimeSeconds: typeof item.totalTimeSeconds === 'number' ? item.totalTimeSeconds : undefined,
+    }];
+  });
+}
+
 function normalizeSettings(value: unknown, fallback: UserSettings): UserSettings {
   if (!isRecord(value)) return fallback;
   const simulado = isRecord(value.simulado) ? value.simulado : {};
   return {
-    theme: value.theme === 'dark' ? 'dark' : value.theme === 'light' ? 'light' : fallback.theme,
+    theme: value.theme === 'dark' || value.theme === 'light' || value.theme === 'system' ? value.theme : fallback.theme,
     reviewInterval: typeof value.reviewInterval === 'number' && value.reviewInterval > 0 ? value.reviewInterval : fallback.reviewInterval,
     showDemoQuestions: typeof value.showDemoQuestions === 'boolean' ? value.showDemoQuestions : fallback.showDemoQuestions,
+    dailyGoal: typeof value.dailyGoal === 'number' && value.dailyGoal > 0 ? value.dailyGoal : fallback.dailyGoal,
     simulado: {
       ...fallback.simulado,
       quantidade: typeof simulado.quantidade === 'number' && simulado.quantidade > 0 ? simulado.quantidade : fallback.simulado.quantidade,
       tempoMinutos: typeof simulado.tempoMinutos === 'number' && simulado.tempoMinutos > 0 ? simulado.tempoMinutos : fallback.simulado.tempoMinutos,
       penalidade: typeof simulado.penalidade === 'number' && simulado.penalidade >= 0 ? simulado.penalidade : fallback.simulado.penalidade,
       disciplinas: Array.isArray(simulado.disciplinas) && simulado.disciplinas.every((item) => typeof item === 'string') ? simulado.disciplinas : fallback.simulado.disciplinas,
+      assuntos: Array.isArray(simulado.assuntos) && simulado.assuntos.every((item) => typeof item === 'string') ? simulado.assuntos : fallback.simulado.assuntos,
+      dificuldade: simulado.dificuldade === 'fácil' || simulado.dificuldade === 'média' || simulado.dificuldade === 'difícil' || simulado.dificuldade === 'todas' ? simulado.dificuldade : fallback.simulado.dificuldade,
     },
   };
 }
@@ -180,11 +211,12 @@ export function importStudyData(raw: unknown, current: AppState): ImportReport {
   const isHistoryOnly = Boolean(payload && !Array.isArray(payload.questions) && Array.isArray(payload.attempts));
   if (isHistoryOnly && payload) {
     const attemptReport = normalizeAttempts(payload.attempts, current.questions);
+    const sessions = normalizeSessions(payload.sessions);
     const currentIds = new Set(current.attempts.map((attempt) => attempt.id));
     const newAttempts = attemptReport.attempts.filter((attempt) => !currentIds.has(attempt.id));
     const duplicateCount = attemptReport.duplicates + attemptReport.attempts.length - newAttempts.length;
     return {
-      state: { ...current, attempts: [...current.attempts, ...newAttempts] },
+      state: { ...current, attempts: [...current.attempts, ...newAttempts], sessions: [...current.sessions, ...sessions] },
       analyzed: 0,
       imported: 0,
       duplicates: 0,
@@ -226,6 +258,7 @@ export function importStudyData(raw: unknown, current: AppState): ImportReport {
     ? {
         questions: allQuestions,
         attempts: attemptReport.attempts,
+        sessions: normalizeSessions(payload?.sessions),
         marks: normalizeMarks(payload?.marks, allQuestions),
         settings: normalizeSettings(payload?.settings, current.settings),
       }
@@ -248,12 +281,13 @@ export function importStudyData(raw: unknown, current: AppState): ImportReport {
 export function createExportPayload(state: AppState, kind: ExportKind, exportedAt = new Date()): unknown {
   const metadata = { schemaVersion: 1, exportedAt: exportedAt.toISOString() };
   if (kind === 'questions') return { ...metadata, questions: state.questions };
-  if (kind === 'history') return { ...metadata, attempts: state.attempts };
+  if (kind === 'history') return { ...metadata, attempts: state.attempts, sessions: state.sessions };
   if (kind === 'progress') return { ...metadata, progress: [...deriveProgressByQuestion(state.questions, state.attempts).values()] };
   return {
     ...metadata,
     questions: state.questions,
     attempts: state.attempts,
+    sessions: state.sessions,
     marks: state.marks,
     settings: state.settings,
   };

@@ -3,11 +3,12 @@ import type { AnswerRecord, Question } from '../types';
 import { calculateTopicProgress } from './priorityAlgorithm';
 import { getNextRecommendation } from './recommendation';
 import { selectQuestionsForSession } from './questionSelectionAlgorithm';
-import { calculatePerformance } from './performanceAlgorithm';
+import { calculateDailyPerformance, calculatePerformance } from './performanceAlgorithm';
 import { createExportPayload, importStudyData } from '../services/importExportService';
 import { calculateCebraspeScore } from './cebraspeAlgorithm';
 import { buildNotebookItems } from './notebookAlgorithm';
 import { deriveProgressByQuestion } from './reviewAlgorithm';
+import { calculateTagPerformance } from './tagPerformanceAlgorithm';
 import { calculateNextReview, deriveQuestionProgress } from './reviewAlgorithm';
 
 const fixedNow = new Date('2026-09-28T12:00:00.000Z');
@@ -130,6 +131,23 @@ describe('recomendação e seleção', () => {
     expect(initialTopics[0].disciplina).toBe('História do Maranhão');
     expect(updatedHistoryPriority).toBeLessThan(initialHistoryPriority);
   });
+
+  it('seleciona aproximadamente 70% do assunto crítico e 30% de complementares', () => {
+    const priorityQuestions = Array.from({ length: 10 }, (_, index) => makeQuestion(`priority-${index}`, 'França Equinocial'));
+    const complementaryQuestions = Array.from({ length: 10 }, (_, index) => makeQuestion(`other-${index}`, 'Revolta de Bequimão'));
+    const selection = selectQuestionsForSession({
+      questions: [...priorityQuestions, ...complementaryQuestions],
+      attempts: [],
+      quantity: 10,
+      mode: 'errors',
+      priorityTopic: 'França Equinocial',
+      now: fixedNow,
+    });
+
+    expect(selection.questions).toHaveLength(10);
+    expect(selection.questions.filter((question) => question.assunto === 'França Equinocial')).toHaveLength(7);
+    expect(selection.questions.filter((question) => question.assunto === 'Revolta de Bequimão')).toHaveLength(3);
+  });
 });
 
 describe('desempenho recente', () => {
@@ -154,6 +172,15 @@ describe('desempenho recente', () => {
     expect(summary.windows['10'].blank).toBe(1);
     expect(summary.recentTrend).toBe('down');
   });
+
+  it('agrega evolução diária e respeita o período solicitado', () => {
+    const question = makeQuestion('daily-performance');
+    const old = makeAttempt(question, true, new Date(fixedNow.getTime() - 10 * dayInMs));
+    const recent = makeAttempt(question, false, new Date(fixedNow.getTime() - 2 * dayInMs), 1);
+
+    expect(calculateDailyPerformance([old, recent], 7)).toHaveLength(1);
+    expect(calculateDailyPerformance([old, recent])).toHaveLength(2);
+  });
 });
 
 describe('importação e backup', () => {
@@ -162,12 +189,14 @@ describe('importação e backup', () => {
     const current = {
       questions: [existing],
       attempts: [],
+      sessions: [],
       marks: {},
       settings: {
         theme: 'light' as const,
         reviewInterval: 3,
         showDemoQuestions: true,
-        simulado: { quantidade: 10, tempoMinutos: 40, penalidade: 1, incluirIneditas: true, disciplinas: [] },
+        dailyGoal: 20,
+        simulado: { quantidade: 10, tempoMinutos: 40, penalidade: 1, incluirIneditas: true, disciplinas: [], assuntos: [], dificuldade: 'todas' as const },
       },
     };
     const valid = {
@@ -196,12 +225,14 @@ describe('importação e backup', () => {
     const original = {
       questions: [question],
       attempts: [attempt],
+      sessions: [],
       marks: { [question.id]: { favorita: true, revisar: true, pegadinha: false, dificil: false } },
       settings: {
         theme: 'dark' as const,
         reviewInterval: 5,
         showDemoQuestions: true,
-        simulado: { quantidade: 15, tempoMinutos: 60, penalidade: 0.5, incluirIneditas: true, disciplinas: [question.disciplina] },
+        dailyGoal: 30,
+        simulado: { quantidade: 15, tempoMinutos: 60, penalidade: 0.5, incluirIneditas: true, disciplinas: [question.disciplina], assuntos: [], dificuldade: 'todas' as const },
       },
     };
     const backup = createExportPayload(original, 'backup', fixedNow);
@@ -282,4 +313,18 @@ describe('Caderno Inteligente', () => {
     expect(categoriesById.get(overdue.id)).toContain('REVISOES_VENCIDAS');
     expect(categoriesById.get(marked.id)).toEqual(expect.arrayContaining(['FAVORITAS', 'QUESTOES_DIFICEIS', 'PEGADINHAS', 'NAO_VISTAS']));
   });
+});
+
+it('calcula taxa de erro por tag sem contar respostas em branco', () => {
+  const exceptionQuestion = { ...makeQuestion('tag-exception'), tags: ['exceção'] };
+  const attempts = [
+    makeAttempt(exceptionQuestion, false, fixedNow),
+    makeAttempt(exceptionQuestion, true, new Date(fixedNow.getTime() + 1000), 1),
+    { ...makeAttempt(exceptionQuestion, false, new Date(fixedNow.getTime() + 2000), 2), acertou: null, resposta: 'EM_BRANCO' as const },
+  ];
+  const performance = calculateTagPerformance([exceptionQuestion], attempts)[0];
+
+  expect(performance.tag).toBe('EXCEÇÃO');
+  expect(performance.attempts).toBe(2);
+  expect(performance.errorRate).toBe(0.5);
 });

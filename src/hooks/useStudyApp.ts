@@ -16,6 +16,8 @@ import type {
   Recommendation,
   ReviewItem,
   NotebookItem,
+  StudyMode,
+  StudySession,
   TopicProgress,
   UserSettings,
   ViewKey,
@@ -42,15 +44,18 @@ function createSessionId(): string {
 }
 
 const defaultSettings: UserSettings = {
-  theme: 'light',
+  theme: 'system',
   reviewInterval: 3,
   showDemoQuestions: true,
+  dailyGoal: 20,
   simulado: {
     quantidade: 20,
     tempoMinutos: 40,
     penalidade: 1,
     incluirIneditas: true,
     disciplinas: ['História do Maranhão', 'Informática', 'Língua Portuguesa'],
+    assuntos: [],
+    dificuldade: 'todas',
   },
 };
 
@@ -58,8 +63,52 @@ export function createDefaultState(): AppState {
   return {
     questions: sampleQuestions,
     attempts: [],
+    sessions: [],
     marks: {},
     settings: defaultSettings,
+  };
+}
+
+function createOpenSession(id: string, questions: Question[], mode: StudyMode): StudySession {
+  return {
+    id,
+    startedAt: new Date().toISOString(),
+    mode,
+    questionIds: questions.map((question) => question.id),
+    answered: 0,
+    correct: 0,
+    wrong: 0,
+    blank: 0,
+  };
+}
+
+function updateSession(session: StudySession, attempt: AnswerRecord): StudySession {
+  const isBlank = attempt.acertou === null;
+  const correct = session.correct + (attempt.acertou === true ? 1 : 0);
+  const wrong = session.wrong + (attempt.acertou === false ? 1 : 0);
+  const blank = session.blank + (isBlank ? 1 : 0);
+  const evaluated = correct + wrong;
+  return {
+    ...session,
+    answered: session.answered + 1,
+    correct,
+    wrong,
+    blank,
+    accuracy: evaluated ? correct / evaluated : undefined,
+    totalTimeSeconds: (session.totalTimeSeconds ?? 0) + attempt.tempoGasto / 1000,
+  };
+}
+
+function finishSession(session: StudySession, finishedAt: number): StudySession {
+  const evaluated = session.correct + session.wrong;
+  return {
+    ...session,
+    finishedAt: new Date(finishedAt).toISOString(),
+    accuracy: evaluated ? session.correct / evaluated : undefined,
+    totalTimeSeconds: Math.max(
+      session.totalTimeSeconds ?? 0,
+      (finishedAt - new Date(session.startedAt).getTime()) / 1000,
+    ),
   };
 }
 
@@ -88,10 +137,12 @@ export function useStudyApp() {
         ...partial,
         questions: Array.isArray(partial.questions) ? partial.questions : sampleQuestions,
         attempts: Array.isArray(partial.attempts) ? partial.attempts : [],
+        sessions: Array.isArray(partial.sessions) ? partial.sessions : [],
         marks: partial.marks ?? {},
         settings: {
           ...defaultSettings,
           ...partial.settings,
+          dailyGoal: partial.settings?.dailyGoal ?? defaultSettings.dailyGoal,
           simulado: { ...defaultSettings.simulado, ...partial.settings?.simulado },
         },
       });
@@ -107,7 +158,16 @@ export function useStudyApp() {
   }, [state, storageReady]);
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', state.settings.theme === 'dark');
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyTheme = () => {
+      const isDark = state.settings.theme === 'dark' || (state.settings.theme === 'system' && mediaQuery.matches);
+      document.documentElement.classList.toggle('dark', isDark);
+    };
+    applyTheme();
+    if (state.settings.theme === 'system') {
+      mediaQuery.addEventListener('change', applyTheme);
+      return () => mediaQuery.removeEventListener('change', applyTheme);
+    }
   }, [state.settings.theme]);
 
   const updateState = useCallback((updater: (current: AppState) => AppState) => {
@@ -124,8 +184,9 @@ export function useStudyApp() {
     const acertos = attempts.filter((item) => item.acertou === true).length;
     const erros = attempts.filter((item) => item.acertou === false).length;
     const emBranco = attempts.filter((item) => item.acertou === null).length;
-    const total = acertos + erros;
-    const percentual = total > 0 ? Math.round((acertos / total) * 100) : 0;
+    const total = attempts.length;
+    const avaliadas = acertos + erros;
+    const percentual = avaliadas > 0 ? Math.round((acertos / avaliadas) * 100) : 0;
 
     const uniqueQuestionIds = new Set(attempts.map((item) => item.questionId));
     const naoRespondidas = state.questions.length - uniqueQuestionIds.size;
@@ -176,7 +237,10 @@ export function useStudyApp() {
       return date.toDateString() === today.toDateString();
     }).length;
 
-    const avgTime = total > 0 ? Math.round(attempts.reduce((sum, item) => sum + item.tempoGasto, 0) / total / 1000) : 0;
+    const avgTime = avaliadas > 0
+      ? Math.round(attempts.filter((item) => item.acertou !== null).reduce((sum, item) => sum + item.tempoGasto, 0) / avaliadas / 1000)
+      : 0;
+    const progressoDiario = attempts.filter((attempt) => new Date(attempt.data).toDateString() === new Date().toDateString()).length;
 
     const paraRevisao = [...progressByQuestion.values()].filter((progress) => isReviewOverdue(progress)).length;
 
@@ -185,6 +249,7 @@ export function useStudyApp() {
       acertos,
       erros,
       emBranco,
+      avaliadas,
       percentual,
       naoRespondidas,
       paraRevisao,
@@ -194,6 +259,8 @@ export function useStudyApp() {
       sequenciaAtual: currentStreak,
       respondidasHoje: respondidasHoje,
       tempoMedio: avgTime,
+      metaDiaria: state.settings.dailyGoal,
+      progressoDiario,
     };
   }, [progressByQuestion, state.attempts, state.questions]);
 
@@ -222,6 +289,7 @@ export function useStudyApp() {
       }
 
       const summary = map.get(attempt.disciplina)!;
+      if (attempt.acertou === null) continue;
       if (attempt.acertou) summary.acertos += 1;
       else summary.erros += 1;
     }
@@ -287,7 +355,7 @@ export function useStudyApp() {
 
   const history = useMemo(() => [...state.attempts].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()), [state.attempts]);
 
-  const startTraining = useCallback((filters?: { disciplina?: string; assunto?: string; quantidade?: number; mode?: Recommendation['mode'] }) => {
+  const startTraining = useCallback((filters?: { disciplina?: string; assunto?: string; priorityTopic?: string; quantidade?: number; mode?: Recommendation['mode'] }) => {
     const modeMap: Record<NonNullable<Recommendation['mode']>, QuestionSelectionMode> = {
       TREINO: 'practice',
       REVISAO: 'review',
@@ -301,6 +369,7 @@ export function useStudyApp() {
       quantity: requested,
       discipline: filters?.disciplina,
       topic: filters?.assunto,
+      priorityTopic: filters?.priorityTopic,
       mode: filters?.mode ? modeMap[filters.mode] : 'practice',
     });
 
@@ -309,20 +378,26 @@ export function useStudyApp() {
     setSelectedAnswer(null);
     setAnswerConfirmed(false);
     setStartTime(selection.questions.length ? Date.now() : 0);
-    setActiveSessionId(createSessionId());
-    setActiveMode(filters?.mode ?? 'TREINO');
+    const sessionId = createSessionId();
+    const mode = filters?.mode ?? 'TREINO';
+    setActiveSessionId(sessionId);
+    setActiveMode(mode);
+    updateState((current) => ({
+      ...current,
+      sessions: [...current.sessions, createOpenSession(sessionId, selection.questions, mode)],
+    }));
     setTrainingNotice(selection.questions.length < requested
       ? `Encontradas ${selection.questions.length} de ${requested} questões elegíveis. ${selection.recentlyExcluded} questão(ões) recente(s) ficaram de fora para evitar repetição.`
       : '');
     setView('train');
-  }, [state.attempts, state.questions]);
+  }, [state.attempts, state.questions, updateState]);
 
   const currentTrainingQuestion = trainingQueue[trainingIndex] ?? null;
 
   const recordAnswer = useCallback((
     question: Question,
     answer: 'CERTO' | 'ERRADO',
-    metadata?: { sessionId?: string; mode?: NonNullable<AnswerRecord['mode']> },
+    metadata?: { sessionId?: string; mode?: NonNullable<AnswerRecord['mode']>; confidence?: number },
   ) => {
     if (answerConfirmed) return;
     const acertou = answer === question.respostaCorreta;
@@ -344,11 +419,15 @@ export function useStudyApp() {
       answeredAt,
       sessionId: metadata?.sessionId ?? activeSessionId,
       mode: metadata?.mode ?? activeMode,
+      confidence: metadata?.confidence,
     };
 
     updateState((current) => ({
       ...current,
       attempts: [...current.attempts, record],
+      sessions: current.sessions.map((session) => session.id === record.sessionId
+        ? updateSession(session, record)
+        : session),
     }));
 
     setSelectedAnswer(answer);
@@ -369,8 +448,14 @@ export function useStudyApp() {
     setSelectedAnswer(null);
     setAnswerConfirmed(false);
     setStartTime(0);
+    updateState((current) => ({
+      ...current,
+      sessions: current.sessions.map((session) => session.id === activeSessionId
+        ? finishSession(session, Date.now())
+        : session),
+    }));
     setView('dashboard');
-  }, [trainingIndex, trainingQueue.length]);
+  }, [activeSessionId, trainingIndex, trainingQueue.length, updateState]);
 
   const toggleMark = useCallback((questionId: string, mark: 'favorita' | 'revisar' | 'pegadinha' | 'dificil') => {
     updateState((current) => {
@@ -433,8 +518,12 @@ export function useStudyApp() {
     reader.readAsText(file);
   }, [state]);
 
-  const startSimulado = useCallback((disciplinas: string[], quantity: number, timeLimitMinutes: number, penalty: number) => {
-    const filtered = state.questions.filter((question) => !disciplinas.length || disciplinas.includes(question.disciplina));
+  const startSimulado = useCallback((disciplinas: string[], assuntos: string[], difficulty: Question['dificuldade'] | 'todas', quantity: number, timeLimitMinutes: number, penalty: number) => {
+    const filtered = state.questions.filter((question) =>
+      (!disciplinas.length || disciplinas.includes(question.disciplina)) &&
+      (!assuntos.length || assuntos.includes(question.assunto)) &&
+      (difficulty === 'todas' || question.dificuldade === difficulty),
+    );
     const selection = selectQuestionsForSession({
       questions: filtered,
       attempts: state.attempts,
@@ -462,6 +551,10 @@ export function useStudyApp() {
       elapsedByQuestion: {},
       finished: false,
     });
+    updateState((current) => ({
+      ...current,
+      sessions: [...current.sessions, createOpenSession(sessionId, selection.questions, 'SIMULADO')],
+    }));
     setActiveSessionId(sessionId);
     setActiveMode('SIMULADO');
     setSelectedAnswer(null);
@@ -471,11 +564,11 @@ export function useStudyApp() {
       ...current,
       settings: {
         ...current.settings,
-        simulado: { ...current.settings.simulado, quantidade: quantity, tempoMinutos: timeLimitMinutes, penalidade: penalty, disciplinas },
+        simulado: { ...current.settings.simulado, quantidade: quantity, tempoMinutos: timeLimitMinutes, penalidade: penalty, disciplinas, assuntos, dificuldade: difficulty },
       },
     }));
     setView('simulado');
-  }, [state.attempts, state.questions]);
+  }, [state.attempts, state.questions, updateState]);
 
   const simuladoCurrent = simuladoSession && !simuladoSession.finished
     ? simuladoSession.questions[simuladoSession.index] ?? null
@@ -546,10 +639,28 @@ export function useStudyApp() {
           revisada: false,
         };
       });
-      return { ...current, attempts: [...current.attempts, ...sessionAttempts] };
+      const updatedSessions = current.sessions.map((session) => {
+        if (session.id !== simuladoSession.sessionId) return session;
+        const updated = sessionAttempts.reduce((currentSession, attempt) => updateSession(currentSession, attempt), session);
+        return finishSession(updated, finishedAt);
+      });
+      return { ...current, attempts: [...current.attempts, ...sessionAttempts], sessions: updatedSessions };
     });
     setSimuladoSession({ ...simuladoSession, elapsedByQuestion, finished: true, finishedAt });
   }, [simuladoSession, updateState]);
+
+  const resetApp = useCallback((scope: 'all' | 'progress' | 'history' | 'questions' = 'all') => {
+    setState((current) => {
+      if (scope === 'progress') return { ...current, attempts: [], sessions: [], marks: {} };
+      if (scope === 'history') return { ...current, attempts: [], sessions: [] };
+      if (scope === 'questions') return { ...current, questions: [], attempts: [], sessions: [], marks: {} };
+      return createDefaultState();
+    });
+    setTrainingQueue([]);
+    setTrainingIndex(0);
+    setSimuladoSession(null);
+    setView('dashboard');
+  }, []);
 
   return {
     view,
@@ -583,6 +694,6 @@ export function useStudyApp() {
     answerSimuladoQuestion,
     moveSimuladoQuestion,
     finishSimulado,
-    resetApp: () => setState(createDefaultState()),
+    resetApp,
   };
 }

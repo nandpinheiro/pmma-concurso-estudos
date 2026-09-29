@@ -10,6 +10,7 @@ export type ViewKey =
   | 'performance'
   | 'prioridades'
   | 'historico'
+  | 'sessoes'
   | 'settings'
   | 'simulado';
 
@@ -95,15 +96,18 @@ export interface MarkState {
 }
 
 export interface UserSettings {
-  theme: 'light' | 'dark';
+  theme: 'light' | 'dark' | 'system';
   reviewInterval: number;
   showDemoQuestions: boolean;
+  dailyGoal: number;
   simulado: {
     quantidade: number;
     tempoMinutos: number;
     penalidade: number;
     incluirIneditas: boolean;
     disciplinas: string[];
+    assuntos: string[];
+    dificuldade: Difficulty | 'todas';
   };
 }
 
@@ -117,11 +121,21 @@ export interface Recommendation {
   mode?: 'TREINO' | 'REVISAO' | 'ERROS' | 'NAO_VISTAS';
 }
 
+export type StudyMode = 'TREINO' | 'REVISAO' | 'SIMULADO' | 'ERROS' | 'NAO_VISTAS';
+
 export interface StudySession {
-  questions: Question[];
-  currentIndex: number;
+  id: string;
   startedAt: string;
-  finished: boolean;
+  finishedAt?: string;
+  mode: StudyMode;
+  questionIds: string[];
+  answered: number;
+  correct: number;
+  wrong: number;
+  blank: number;
+  accuracy?: number;
+  score?: number;
+  totalTimeSeconds?: number;
 }
 
 export interface DisciplineSummary {
@@ -159,6 +173,7 @@ export type NotebookCategory =
 export interface NotebookItem extends ReviewItem {
   enunciado: string;
   categorias: NotebookCategory[];
+  confidenceSignal?: 'ACERTO_BAIXA_CONFIANCA' | 'ERRO_ALTA_CONFIANCA';
 }
 
 export interface DashboardStats {
@@ -166,6 +181,7 @@ export interface DashboardStats {
   acertos: number;
   erros: number;
   emBranco: number;
+  avaliadas: number;
   percentual: number;
   naoRespondidas: number;
   paraRevisao: number;
@@ -175,11 +191,14 @@ export interface DashboardStats {
   sequenciaAtual: number;
   respondidasHoje: number;
   tempoMedio: number;
+  metaDiaria: number;
+  progressoDiario: number;
 }
 
 export interface AppState {
   questions: Question[];
   attempts: AnswerRecord[];
+  sessions: StudySession[];
   marks: Record<string, MarkState>;
   settings: UserSettings;
 }

@@ -9,6 +9,7 @@ export interface QuestionSelectionOptions {
   quantity: number;
   discipline?: string;
   topic?: string;
+  priorityTopic?: string;
   mode?: QuestionSelectionMode;
   now?: Date;
   excludeRecentlySeenHours?: number;
@@ -71,8 +72,21 @@ export function selectQuestionsForSession(options: QuestionSelectionOptions): Qu
     .filter(({ rank }) => mode !== 'review' && mode !== 'unseen' || rank === 0)
     .sort((left, right) => left.rank - right.rank || left.seenAt - right.seenAt || left.question.id.localeCompare(right.question.id));
 
+  let selectedCandidates = candidates;
+  if (options.priorityTopic && !options.topic) {
+    const priorityCount = Math.min(quantity, Math.ceil(quantity * 0.7));
+    const priority = candidates.filter((candidate) => candidate.question.assunto === options.priorityTopic);
+    const complementary = candidates.filter((candidate) => candidate.question.assunto !== options.priorityTopic);
+    selectedCandidates = [
+      ...priority.slice(0, priorityCount),
+      ...complementary.slice(0, Math.max(0, quantity - priorityCount)),
+      ...priority.slice(priorityCount),
+      ...complementary.slice(Math.max(0, quantity - priorityCount)),
+    ];
+  }
+
   return {
-    questions: candidates.slice(0, quantity).map((candidate) => candidate.question),
+    questions: selectedCandidates.slice(0, quantity).map((candidate) => candidate.question),
     eligibleCount: candidates.length,
     recentlyExcluded,
   };

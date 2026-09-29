@@ -35,6 +35,14 @@ export function buildNotebookItems(
     if (mark?.pegadinha || question.pegadinha || question.tags.some((tag) => tag.toLowerCase().includes('pegadinha'))) categories.push('PEGADINHAS');
     if (!progress.timesSeen) categories.push('NAO_VISTAS');
 
+    const confidenceSignal = latestAttempt?.confidence !== undefined
+      ? latestAttempt.acertou === false && latestAttempt.confidence >= 4
+        ? 'ERRO_ALTA_CONFIANCA' as const
+        : latestAttempt.acertou === true && latestAttempt.confidence <= 2
+          ? 'ACERTO_BAIXA_CONFIANCA' as const
+          : undefined
+      : undefined;
+
     return [{
       questionId: question.id,
       disciplina: question.disciplina,
@@ -47,6 +55,7 @@ export function buildNotebookItems(
       prioridade: topic && topic.priorityScore >= 65 ? 'alta' as const : topic && topic.priorityScore >= 35 ? 'média' as const : 'baixa' as const,
       vencida: isReviewOverdue(progress, now),
       categorias: categories,
+      confidenceSignal,
       lastAttemptAt: latestAttempt?.data,
     }];
   }).sort((left, right) => Number(right.vencida) - Number(left.vencida) || new Date(right.lastAttemptAt ?? 0).getTime() - new Date(left.lastAttemptAt ?? 0).getTime());
